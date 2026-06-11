@@ -361,10 +361,9 @@ function Prompt-ContinueMessage {
     param([object]$Defaults)
 
     Write-Host ""
-    Write-Host "Auto-continue prompt sent when keywords match (Enter = default):" -ForegroundColor White
+    Write-Host "Auto-continue prompt sent when keywords match (edit then Enter):" -ForegroundColor White
     Write-Host "Detected locale: $($Defaults.locale)" -ForegroundColor DarkGray
-    Write-Host "Default: $($Defaults.continue_message)" -ForegroundColor DarkGray
-    $input = Read-Host "Continue prompt"
+    $input = Read-LineWithDefault -Prompt "Continue prompt" -Default ([string]$Defaults.continue_message)
     if ([string]::IsNullOrWhiteSpace($input)) {
         return [string]$Defaults.continue_message
     }

@@ -72,11 +72,18 @@ prompt_keywords() {
 prompt_continue_message() {
   local default_message="$1"
   local locale="$2"
+  local input=""
   echo
-  echo "Auto-continue prompt sent when keywords match (Enter = default):"
+  echo "Auto-continue prompt sent when keywords match (edit then Enter):"
   echo "Detected locale: $locale"
-  echo "Default: $default_message"
-  read -r -p "Continue prompt: " input || true
+  if [[ -n "${BASH_VERSINFO[0]:-}" && "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+    IFS= read -r -e -i "$default_message" -p "Continue prompt: " input || true
+  else
+    read -r -p "Continue prompt [$default_message]: " input || true
+    if [[ -z "$input" ]]; then
+      input="$default_message"
+    fi
+  fi
   input="${input//$'\r'/}"
   if [[ -z "$input" ]]; then
     printf '%s' "$default_message"
