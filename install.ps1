@@ -292,6 +292,91 @@ function Resolve-LocaleDefaults {
     }
 }
 
+function Get-ExistingHookConfigPath {
+    $paths = @(
+        (Join-Path $env:USERPROFILE ".cursor\hooks\hook-config.json"),
+        (Join-Path $env:USERPROFILE ".codex\hooks\hook-config.json")
+    )
+    if ($env:CODEX_HOME) {
+        $codexPath = Join-Path $env:CODEX_HOME "hooks\hook-config.json"
+        if ($paths -notcontains $codexPath) {
+            $paths += $codexPath
+        }
+    }
+
+    $newestPath = $null
+    $newestTime = [datetime]::MinValue
+    foreach ($path in $paths) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $item = Get-Item -LiteralPath $path
+        if ($item.LastWriteTime -gt $newestTime) {
+            $newestTime = $item.LastWriteTime
+            $newestPath = $item.FullName
+        }
+    }
+
+    return $newestPath
+}
+
+function Read-ExistingHookConfig {
+    param([string]$ConfigPath)
+
+    if ([string]::IsNullOrWhiteSpace($ConfigPath)) { return $null }
+    try {
+        $json = [System.IO.File]::ReadAllText($ConfigPath, $script:HookUtf8)
+        return ($json | ConvertFrom-Json)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Apply-ExistingHookConfig {
+    param(
+        [object]$Defaults,
+        [object]$Existing
+    )
+
+    $webhookUrl = ""
+    if ($null -eq $Existing) {
+        return [pscustomobject]@{
+            Defaults   = $Defaults
+            WebhookUrl = $webhookUrl
+        }
+    }
+
+    $keywords = Get-SafePropertyValue -Object $Existing -Name "keywords"
+    if ($null -ne $keywords) {
+        $parsedKeywords = @($keywords | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($parsedKeywords.Count -gt 0) {
+            $Defaults.keywords = $parsedKeywords
+        }
+    }
+
+    $continueMessage = Get-SafePropertyValue -Object $Existing -Name "continue_message"
+    if (-not [string]::IsNullOrWhiteSpace([string]$continueMessage)) {
+        $Defaults.continue_message = [string]$continueMessage
+    }
+
+    $tailLength = Get-SafePropertyValue -Object $Existing -Name "tail_length"
+    if ($null -ne $tailLength) {
+        $Defaults.tail_length = [int]$tailLength
+    }
+
+    $maxLoops = Get-SafePropertyValue -Object $Existing -Name "max_continue_loops"
+    if ($null -ne $maxLoops) {
+        $Defaults.max_continue_loops = [int]$maxLoops
+    }
+
+    $webhookUrl = [string](Get-SafePropertyValue -Object $Existing -Name "webhook_url")
+    if ($null -eq $webhookUrl) { $webhookUrl = "" }
+
+    return [pscustomobject]@{
+        Defaults   = $Defaults
+        WebhookUrl = $webhookUrl
+    }
+}
+
 function Read-LineWithDefault {
     param(
         [string]$Prompt,
@@ -332,10 +417,11 @@ function Read-LineWithDefault {
 }
 
 function Prompt-WebhookUrl {
+    param([string]$Default = "")
+
     Write-Host ""
     Write-Host "Webhook URL (leave empty to disable webhooks):" -ForegroundColor White
-    $url = Read-Host "Webhook URL"
-    return $url.Trim()
+    return (Read-LineWithDefault -Prompt "Webhook URL" -Default $Default).Trim()
 }
 
 function Prompt-Keywords([object]$Defaults) {
@@ -529,7 +615,15 @@ Write-Info "Scanning Cursor/Codex transcripts to detect conversation language...
 $defaults = Resolve-LocaleDefaults -RepoRoot $repoRoot
 Write-Ok "Using $($defaults.locale) locale defaults"
 
-$webhookUrl = Prompt-WebhookUrl
+$existingConfigPath = Get-ExistingHookConfigPath
+$existingConfig = Read-ExistingHookConfig -ConfigPath $existingConfigPath
+if ($null -ne $existingConfig) {
+    Write-Ok "Loaded previous settings from $existingConfigPath"
+}
+$appliedDefaults = Apply-ExistingHookConfig -Defaults $defaults -Existing $existingConfig
+$defaults = $appliedDefaults.Defaults
+
+$webhookUrl = Prompt-WebhookUrl -Default $appliedDefaults.WebhookUrl
 $keywords = Prompt-Keywords -Defaults $defaults
 $defaults.continue_message = Prompt-ContinueMessage -Defaults $defaults
 

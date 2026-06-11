@@ -42,10 +42,72 @@ get_repo_root() {
   printf '%s' "$temp_root/agent-webhook-tracking-continues-main"
 }
 
+find_existing_hook_config() {
+  local newest="" newest_mtime=0 mtime candidate
+  local candidates=(
+    "$HOME/.cursor/hooks/hook-config.json"
+    "$HOME/.codex/hooks/hook-config.json"
+  )
+  if [[ -n "${CODEX_HOME:-}" ]]; then
+    candidates+=("$CODEX_HOME/hooks/hook-config.json")
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    [[ -f "$candidate" ]] || continue
+    if mtime=$(stat -c %Y "$candidate" 2>/dev/null); then
+      :
+    else
+      mtime=$(stat -f %m "$candidate" 2>/dev/null || echo 0)
+    fi
+    if [[ "$mtime" -gt "$newest_mtime" ]]; then
+      newest_mtime=$mtime
+      newest=$candidate
+    fi
+  done
+  printf '%s' "$newest"
+}
+
+apply_existing_hook_config() {
+  local defaults_json="$1"
+  local existing_path="$2"
+  python3 - "$defaults_json" "$existing_path" <<'PY'
+import json, sys
+from pathlib import Path
+
+defaults = json.loads(sys.argv[1])
+existing = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+
+keywords = existing.get("keywords")
+if isinstance(keywords, list) and keywords:
+    defaults["keywords"] = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
+
+continue_message = existing.get("continue_message")
+if isinstance(continue_message, str) and continue_message.strip():
+    defaults["continue_message"] = continue_message.strip()
+
+for key in ("tail_length", "max_continue_loops"):
+    value = existing.get(key)
+    if value is not None:
+        defaults[key] = value
+
+defaults["existing_webhook_url"] = str(existing.get("webhook_url") or "")
+print(json.dumps(defaults, ensure_ascii=False))
+PY
+}
+
 prompt_webhook_url() {
+  local default_url="${1:-}"
+  local url=""
   echo
   echo "Webhook URL (leave empty to disable webhooks):"
-  read -r -p "Webhook URL: " url || true
+  if [[ -n "${BASH_VERSINFO[0]:-}" && "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+    IFS= read -r -e -i "$default_url" -p "Webhook URL: " url || true
+  else
+    read -r -p "Webhook URL [$default_url]: " url || true
+    if [[ -z "$url" ]]; then
+      url="$default_url"
+    fi
+  fi
   url="${url//$'\r'/}"
   printf '%s' "$(echo "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 }
@@ -272,7 +334,19 @@ main() {
   max_loops="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['max_continue_loops'])")"
   ok "Using $locale locale defaults"
 
-  webhook_url="$(prompt_webhook_url)"
+  local existing_config_path existing_webhook=""
+  existing_config_path="$(find_existing_hook_config)"
+  if [[ -n "$existing_config_path" ]]; then
+    ok "Loaded previous settings from $existing_config_path"
+    defaults_json="$(apply_existing_hook_config "$defaults_json" "$existing_config_path")"
+    default_keywords="$(echo "$defaults_json" | python3 -c "import json,sys; print(', '.join(json.load(sys.stdin)['keywords']))")"
+    continue_message="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['continue_message'])")"
+    tail_length="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['tail_length'])")"
+    max_loops="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['max_continue_loops'])")"
+    existing_webhook="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('existing_webhook_url',''))")"
+  fi
+
+  webhook_url="$(prompt_webhook_url "$existing_webhook")"
   keywords_input="$(prompt_keywords "$default_keywords" "$locale")"
   keywords_csv="$keywords_input"
   continue_message="$(prompt_continue_message "$continue_message" "$locale")"
