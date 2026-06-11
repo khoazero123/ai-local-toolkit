@@ -30,18 +30,47 @@ function Read-DefaultConfig([string]$RepoRoot) {
     return ($json | ConvertFrom-Json)
 }
 
+function Test-ValueInList {
+    param(
+        [object]$Value,
+        [string[]]$Candidates
+    )
+
+    if ($null -eq $Value) { return $false }
+    $text = [string]$Value
+    foreach ($candidate in $Candidates) {
+        if ($text -eq $candidate) { return $true }
+    }
+    return $false
+}
+
+function Get-SafePropertyValue {
+    param(
+        [object]$Object,
+        [string]$Name
+    )
+
+    if ($null -eq $Object) { return $null }
+    $prop = $Object.PSObject.Properties[$Name]
+    if ($null -eq $prop) { return $null }
+    return $prop.Value
+}
+
 function Build-LocaleDefaults {
     param(
         [object]$Config,
         [string]$Locale
     )
 
-    $localeProperty = $Config.locales.PSObject.Properties[$Locale]
-    if ($null -eq $localeProperty) {
+    $locales = Get-SafePropertyValue -Object $Config -Name "locales"
+    if ($null -eq $locales) {
+        $Locale = "en"
+    }
+    elseif ($null -eq (Get-SafePropertyValue -Object $locales -Name $Locale)) {
         $Locale = "en"
     }
 
-    $localeConfig = $Config.locales.$Locale
+    $localeConfig = Get-SafePropertyValue -Object $locales -Name $Locale
     return [pscustomobject]@{
         locale             = $Locale
         keywords           = @($localeConfig.keywords | ForEach-Object { [string]$_ })
@@ -132,12 +161,18 @@ function Get-TranscriptTextFromCursorLine {
     catch {
         return ""
     }
-    if ($obj.role -notin @("user", "assistant")) { return "" }
+
+    $role = Get-SafePropertyValue -Object $obj -Name "role"
+    if (-not (Test-ValueInList -Value $role -Candidates @("user", "assistant"))) { return "" }
+
+    $message = Get-SafePropertyValue -Object $obj -Name "message"
+    $content = @(Get-SafePropertyValue -Object $message -Name "content")
     $chunks = @()
-    $content = @($obj.message.content)
     foreach ($part in $content) {
-        if ($part.type -ne "text") { continue }
-        $text = [string]$part.text
+        if ($null -eq $part) { continue }
+        $partType = Get-SafePropertyValue -Object $part -Name "type"
+        if ($partType -ne "text") { continue }
+        $text = [string](Get-SafePropertyValue -Object $part -Name "text")
         if (Test-SkipTranscriptText -Text $text) { continue }
         $chunks += (Get-NormalizedUserText -Text $text)
     }
@@ -152,14 +187,23 @@ function Get-TranscriptTextFromCodexLine {
     catch {
         return ""
     }
-    if ($obj.type -ne "response_item") { return "" }
-    if ($obj.payload.type -ne "message") { return "" }
-    if ($obj.payload.role -notin @("user", "assistant")) { return "" }
+
+    if ((Get-SafePropertyValue -Object $obj -Name "type") -ne "response_item") { return "" }
+
+    $payload = Get-SafePropertyValue -Object $obj -Name "payload"
+    if ($null -eq $payload -or $payload -isnot [psobject]) { return "" }
+    if ((Get-SafePropertyValue -Object $payload -Name "type") -ne "message") { return "" }
+
+    $role = Get-SafePropertyValue -Object $payload -Name "role"
+    if (-not (Test-ValueInList -Value $role -Candidates @("user", "assistant"))) { return "" }
+
+    $content = @(Get-SafePropertyValue -Object $payload -Name "content")
     $chunks = @()
-    $content = @($obj.payload.content)
     foreach ($part in $content) {
-        if ($part.type -notin @("input_text", "output_text", "text")) { continue }
-        $text = [string]$part.text
+        if ($null -eq $part) { continue }
+        $partType = Get-SafePropertyValue -Object $part -Name "type"
+        if (-not (Test-ValueInList -Value $partType -Candidates @("input_text", "output_text", "text"))) { continue }
+        $text = [string](Get-SafePropertyValue -Object $part -Name "text")
         if (Test-SkipTranscriptText -Text $text) { continue }
         $chunks += (Get-NormalizedUserText -Text $text)
     }
@@ -188,7 +232,14 @@ function Find-TranscriptFiles {
             ForEach-Object { $files.Add($_.FullName) | Out-Null }
     }
 
-    return @($files | Select-Object -Unique)
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $unique = New-Object System.Collections.Generic.List[string]
+    foreach ($path in $files) {
+        if ($seen.Add($path)) {
+            [void]$unique.Add($path)
+        }
+    }
+    return $unique.ToArray()
 }
 
 function Detect-LocaleFromTranscripts {
@@ -200,7 +251,13 @@ function Detect-LocaleFromTranscripts {
     foreach ($file in $files) {
         if ($sampledBytes -ge $maxBytes) { break }
         try {
-            $reader = [System.IO.File]::OpenText($file)
+            $stream = [System.IO.File]::Open(
+                $file,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite
+            )
+            $reader = New-Object System.IO.StreamReader($stream)
             try {
                 while (($line = $reader.ReadLine()) -ne $null) {
                     if ($sampledBytes -ge $maxBytes) { break }
@@ -216,7 +273,7 @@ function Detect-LocaleFromTranscripts {
                 }
             }
             finally {
-                $reader.Close()
+                $reader.Dispose()
             }
         }
         catch {
@@ -230,9 +287,16 @@ function Detect-LocaleFromTranscripts {
 function Resolve-LocaleDefaults {
     param([string]$RepoRoot)
 
-    $locale = Detect-LocaleFromTranscripts
-    $config = Read-DefaultConfig -RepoRoot $RepoRoot
-    return (Build-LocaleDefaults -Config $config -Locale $locale)
+    try {
+        $locale = Detect-LocaleFromTranscripts
+        $config = Read-DefaultConfig -RepoRoot $RepoRoot
+        return (Build-LocaleDefaults -Config $config -Locale $locale)
+    }
+    catch {
+        Write-Warn "Locale detection failed ($($_.Exception.Message)); using English defaults."
+        $config = Read-DefaultConfig -RepoRoot $RepoRoot
+        return (Build-LocaleDefaults -Config $config -Locale "en")
+    }
 }
 
 function Prompt-WebhookUrl {
