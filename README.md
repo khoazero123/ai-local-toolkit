@@ -105,7 +105,7 @@ bash install.sh
 ## Platform notes
 
 - **Windows**: PowerShell 5.1+, hooks run via `.cmd` + `.ps1`
-- **Linux/macOS**: requires `python3`, hooks run via Python
+- **Linux/macOS**: requires `bash`, `curl`, and `jq`; hooks run via shell scripts in `runtime/unix/`
 - Webhooks are disabled when the URL is empty — webhook scripts are still installed but no-op
 
 ## License

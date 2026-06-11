@@ -14,7 +14,7 @@ get_repo_root() {
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   fi
 
-  if [[ -n "$script_dir" && -f "$script_dir/runtime/unix/hook_common.py" ]]; then
+  if [[ -n "$script_dir" && -f "$script_dir/runtime/unix/hook_common.sh" ]]; then
     printf '%s' "$script_dir"
     return 0
   fi
@@ -70,29 +70,15 @@ find_existing_hook_config() {
 apply_existing_hook_config() {
   local defaults_json="$1"
   local existing_path="$2"
-  python3 - "$defaults_json" "$existing_path" <<'PY'
-import json, sys
-from pathlib import Path
-
-defaults = json.loads(sys.argv[1])
-existing = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-
-keywords = existing.get("keywords")
-if isinstance(keywords, list) and keywords:
-    defaults["keywords"] = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
-
-continue_message = existing.get("continue_message")
-if isinstance(continue_message, str) and continue_message.strip():
-    defaults["continue_message"] = continue_message.strip()
-
-for key in ("tail_length", "max_continue_loops"):
-    value = existing.get(key)
-    if value is not None:
-        defaults[key] = value
-
-defaults["existing_webhook_url"] = str(existing.get("webhook_url") or "")
-print(json.dumps(defaults, ensure_ascii=False))
-PY
+  jq -s --argjson defaults "$defaults_json" '
+    .[1] as $existing | .[0] as $defaults |
+    $defaults
+    | .keywords = (if (($existing.keywords // []) | length) > 0 then $existing.keywords else .keywords end)
+    | .continue_message = (if (($existing.continue_message // "") | length) > 0 then $existing.continue_message else .continue_message end)
+    | .tail_length = ($existing.tail_length // .tail_length)
+    | .max_continue_loops = ($existing.max_continue_loops // .max_continue_loops)
+    | .existing_webhook_url = ($existing.webhook_url // "")
+  ' <(printf '%s' "$defaults_json") "$existing_path"
 }
 
 prompt_webhook_url() {
@@ -175,21 +161,20 @@ prompt_yes_no() {
   esac
 }
 
-python_bin() {
-  if command -v python3 >/dev/null 2>&1; then
-    printf '%s' "python3"
-  elif command -v python >/dev/null 2>&1; then
-    printf '%s' "python"
-  else
-    echo ""
-  fi
+require_unix_tools() {
+  local cmd
+  for cmd in bash curl jq; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      echo "$cmd is required on Linux/macOS." >&2
+      exit 1
+    fi
+  done
 }
 
 resolve_locale_defaults() {
   local repo_root="$1"
-  local py="$2"
   local defaults_file="$repo_root/config.defaults.json"
-  "$py" "$repo_root/scripts/locale_defaults.py" resolve auto "$defaults_file"
+  bash "$repo_root/scripts/locale_defaults.sh" resolve auto "$defaults_file"
 }
 
 write_hook_config() {
@@ -201,57 +186,56 @@ write_hook_config() {
   local max_loops="$6"
   local continue_message="$7"
 
-  python3 - "$target_dir" "$webhook_url" "$source" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-target_dir, webhook_url, source, keywords_csv, tail_length, max_loops, continue_message = sys.argv[1:8]
-keywords = [k.strip() for k in keywords_csv.split(",") if k.strip()]
-config = {
-    "source": source,
-    "webhook_url": webhook_url,
-    "keywords": keywords,
-    "tail_length": int(tail_length),
-    "continue_message": continue_message,
-    "max_continue_loops": int(max_loops),
-}
-Path(target_dir, "hook-config.json").write_text(
-    json.dumps(config, ensure_ascii=False, indent=2) + "\n",
-    encoding="utf-8",
-)
-PY
+  jq -n \
+    --arg source "$source" \
+    --arg webhook_url "$webhook_url" \
+    --arg continue_message "$continue_message" \
+    --arg keywords_csv "$keywords_csv" \
+    --argjson tail_length "$tail_length" \
+    --argjson max_continue_loops "$max_loops" \
+    '$keywords_csv
+      | split(",")
+      | map(gsub("^\\s+|\\s+$"; ""))
+      | map(select(length > 0)) as $keywords
+      | {
+          source: $source,
+          webhook_url: $webhook_url,
+          keywords: $keywords,
+          tail_length: $tail_length,
+          continue_message: $continue_message,
+          max_continue_loops: $max_continue_loops
+        }' >"$target_dir/hook-config.json"
+  printf '\n' >>"$target_dir/hook-config.json"
 }
 
 install_cursor_hooks() {
   local repo_root="$1"
   local webhook_url="$2"
   local keywords_csv="$3"
-  local py="$4"
-  local tail_length="$5"
-  local max_loops="$6"
-  local continue_message="$7"
+  local tail_length="$4"
+  local max_loops="$5"
+  local continue_message="$6"
   local cursor_root="$HOME/.cursor"
   local hooks_dir="$cursor_root/hooks"
 
   mkdir -p "$hooks_dir"
-  cp "$repo_root/runtime/unix/"*.py "$hooks_dir/"
-  chmod +x "$hooks_dir/"*.py
+  cp "$repo_root/runtime/unix/"*.sh "$hooks_dir/"
+  chmod +x "$hooks_dir/"*.sh
 
   write_hook_config "$hooks_dir" "$webhook_url" "cursor" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
 
-  cat > "$cursor_root/hooks.json" <<EOF
+  cat >"$cursor_root/hooks.json" <<EOF
 {
   "version": 1,
   "hooks": {
     "beforeSubmitPrompt": [
-      { "command": "$py ./hooks/cursor_before_prompt.py", "timeout": 15 }
+      { "command": "bash ./hooks/cursor_before_prompt.sh", "timeout": 15 }
     ],
     "afterAgentResponse": [
-      { "command": "$py ./hooks/cursor_after_response.py", "timeout": 15 }
+      { "command": "bash ./hooks/cursor_after_response.sh", "timeout": 15 }
     ],
     "stop": [
-      { "command": "$py ./hooks/cursor_stop.py", "timeout": 10, "loop_limit": $max_loops }
+      { "command": "bash ./hooks/cursor_stop.sh", "timeout": 10, "loop_limit": $max_loops }
     ]
   }
 }
@@ -263,20 +247,19 @@ install_codex_hooks() {
   local repo_root="$1"
   local webhook_url="$2"
   local keywords_csv="$3"
-  local py="$4"
-  local tail_length="$5"
-  local max_loops="$6"
-  local continue_message="$7"
+  local tail_length="$4"
+  local max_loops="$5"
+  local continue_message="$6"
   local codex_root="$HOME/.codex"
   local hooks_dir="$codex_root/hooks"
 
   mkdir -p "$hooks_dir"
-  cp "$repo_root/runtime/unix/"*.py "$hooks_dir/"
-  chmod +x "$hooks_dir/"*.py
+  cp "$repo_root/runtime/unix/"*.sh "$hooks_dir/"
+  chmod +x "$hooks_dir/"*.sh
 
   write_hook_config "$hooks_dir" "$webhook_url" "codex" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
 
-  cat > "$codex_root/hooks.json" <<EOF
+  cat >"$codex_root/hooks.json" <<EOF
 {
   "hooks": {
     "UserPromptSubmit": [
@@ -284,7 +267,7 @@ install_codex_hooks() {
         "hooks": [
           {
             "type": "command",
-            "command": "$py $hooks_dir/codex_user_prompt.py",
+            "command": "bash $hooks_dir/codex_user_prompt.sh",
             "timeout": 15,
             "statusMessage": "Webhook user prompt"
           }
@@ -296,7 +279,7 @@ install_codex_hooks() {
         "hooks": [
           {
             "type": "command",
-            "command": "$py $hooks_dir/codex_stop.py",
+            "command": "bash $hooks_dir/codex_stop.sh",
             "timeout": 15,
             "statusMessage": "Webhook + auto continue"
           }
@@ -315,35 +298,30 @@ main() {
   echo "Agent Webhook + Auto Continue Installer (Unix)"
   echo "=============================================="
 
-  local repo_root py defaults_json locale default_keywords keywords_input keywords_csv
-  local tail_length max_loops continue_message webhook_url
+  local repo_root defaults_json locale default_keywords keywords_input keywords_csv
+  local tail_length max_loops continue_message webhook_url existing_webhook=""
   repo_root="$(get_repo_root)"
-
-  py="$(python_bin)"
-  if [[ -z "$py" ]]; then
-    echo "python3 is required to run hooks on Linux/macOS." >&2
-    exit 1
-  fi
+  require_unix_tools
 
   info "Scanning Cursor/Codex transcripts to detect conversation language..."
-  defaults_json="$(resolve_locale_defaults "$repo_root" "$py")"
-  locale="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['locale'])")"
-  default_keywords="$(echo "$defaults_json" | python3 -c "import json,sys; print(', '.join(json.load(sys.stdin)['keywords']))")"
-  continue_message="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['continue_message'])")"
-  tail_length="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['tail_length'])")"
-  max_loops="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['max_continue_loops'])")"
+  defaults_json="$(resolve_locale_defaults "$repo_root")"
+  locale="$(jq -r '.locale' <<<"$defaults_json")"
+  default_keywords="$(jq -r '.keywords | join(", ")' <<<"$defaults_json")"
+  continue_message="$(jq -r '.continue_message' <<<"$defaults_json")"
+  tail_length="$(jq -r '.tail_length' <<<"$defaults_json")"
+  max_loops="$(jq -r '.max_continue_loops' <<<"$defaults_json")"
   ok "Using $locale locale defaults"
 
-  local existing_config_path existing_webhook=""
+  local existing_config_path=""
   existing_config_path="$(find_existing_hook_config)"
   if [[ -n "$existing_config_path" ]]; then
     ok "Loaded previous settings from $existing_config_path"
     defaults_json="$(apply_existing_hook_config "$defaults_json" "$existing_config_path")"
-    default_keywords="$(echo "$defaults_json" | python3 -c "import json,sys; print(', '.join(json.load(sys.stdin)['keywords']))")"
-    continue_message="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['continue_message'])")"
-    tail_length="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['tail_length'])")"
-    max_loops="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['max_continue_loops'])")"
-    existing_webhook="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('existing_webhook_url',''))")"
+    default_keywords="$(jq -r '.keywords | join(", ")' <<<"$defaults_json")"
+    continue_message="$(jq -r '.continue_message' <<<"$defaults_json")"
+    tail_length="$(jq -r '.tail_length' <<<"$defaults_json")"
+    max_loops="$(jq -r '.max_continue_loops' <<<"$defaults_json")"
+    existing_webhook="$(jq -r '.existing_webhook_url // ""' <<<"$defaults_json")"
   fi
 
   webhook_url="$(prompt_webhook_url "$existing_webhook")"
@@ -361,11 +339,11 @@ main() {
   fi
 
   if [[ "$install_cursor" == "yes" ]]; then
-    install_cursor_hooks "$repo_root" "$webhook_url" "$keywords_csv" "$py" "$tail_length" "$max_loops" "$continue_message"
+    install_cursor_hooks "$repo_root" "$webhook_url" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
   fi
 
   if [[ "$install_codex" == "yes" ]]; then
-    install_codex_hooks "$repo_root" "$webhook_url" "$keywords_csv" "$py" "$tail_length" "$max_loops" "$continue_message"
+    install_codex_hooks "$repo_root" "$webhook_url" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
   fi
 
   echo
