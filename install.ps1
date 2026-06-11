@@ -299,6 +299,45 @@ function Resolve-LocaleDefaults {
     }
 }
 
+function Read-LineWithDefault {
+    param(
+        [string]$Prompt,
+        [string]$Default = ""
+    )
+
+    $prefix = "$Prompt "
+    $buffer = New-Object System.Text.StringBuilder
+    if (-not [string]::IsNullOrEmpty($Default)) {
+        [void]$buffer.Append($Default)
+    }
+
+    [Console]::Write($prefix + $buffer.ToString())
+
+    while ($true) {
+        $key = [Console]::ReadKey($true)
+        switch ($key.Key) {
+            "Enter" {
+                [Console]::WriteLine()
+                return $buffer.ToString()
+            }
+            "Backspace" {
+                if ($buffer.Length -gt 0) {
+                    $buffer.Remove($buffer.Length - 1, 1) | Out-Null
+                    $line = $prefix + $buffer.ToString()
+                    [Console]::Write("`r$line ")
+                    [Console]::Write("`r$line")
+                }
+            }
+            default {
+                if ($key.KeyChar -ge 32) {
+                    [void]$buffer.Append($key.KeyChar)
+                    [Console]::Write($key.KeyChar)
+                }
+            }
+        }
+    }
+}
+
 function Prompt-WebhookUrl {
     Write-Host ""
     Write-Host "Webhook URL (leave empty to disable webhooks):" -ForegroundColor White
@@ -308,18 +347,12 @@ function Prompt-WebhookUrl {
 
 function Prompt-Keywords([object]$Defaults) {
     Write-Host ""
-    Write-Host "Auto-continue keywords (comma-separated, Enter = default):" -ForegroundColor White
+    Write-Host "Auto-continue keywords (comma-separated, edit then Enter):" -ForegroundColor White
     Write-Host "Detected locale: $($Defaults.locale)" -ForegroundColor DarkGray
-    if ($Defaults.locale -eq "vi") {
-        Write-Host "Default: Vietnamese keyword set (5 configured phrases)" -ForegroundColor DarkGray
-    }
-    else {
-        $defaultText = ($Defaults.keywords -join ", ")
-        Write-Host "Default: $defaultText" -ForegroundColor DarkGray
-    }
-    $input = Read-Host "Keywords"
+    $defaultText = ($Defaults.keywords -join ", ")
+    $input = Read-LineWithDefault -Prompt "Keywords" -Default $defaultText
     if ([string]::IsNullOrWhiteSpace($input)) {
-        return @($Defaults.keywords)
+        return @()
     }
     return @($input.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }

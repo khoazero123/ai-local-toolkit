@@ -53,16 +53,19 @@ prompt_webhook_url() {
 prompt_keywords() {
   local defaults="$1"
   local locale="$2"
+  local input=""
   echo
-  echo "Auto-continue keywords (comma-separated, Enter = default):"
+  echo "Auto-continue keywords (comma-separated, edit then Enter):"
   echo "Detected locale: $locale"
-  echo "Default: $defaults"
-  read -r -p "Keywords: " input || true
-  input="${input//$'\r'/}"
-  if [[ -z "$input" ]]; then
-    printf '%s' "$defaults"
-    return 0
+  if [[ -n "${BASH_VERSINFO[0]:-}" && "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+    IFS= read -r -e -i "$defaults" -p "Keywords: " input || true
+  else
+    read -r -p "Keywords [$defaults]: " input || true
+    if [[ -z "$input" ]]; then
+      input="$defaults"
+    fi
   fi
+  input="${input//$'\r'/}"
   printf '%s' "$input"
 }
 
