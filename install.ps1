@@ -38,11 +38,29 @@ function Get-ConfigField {
     )
 
     if ($null -eq $Object) { return $null }
-    if ($Object -is [System.Collections.IDictionary]) {
-        if ($Object.Contains($Name)) { return $Object[$Name] }
+
+    $genericDict = $Object -as [System.Collections.Generic.IDictionary[string, object]]
+    if ($null -ne $genericDict) {
+        if ($genericDict.ContainsKey($Name)) {
+            return $genericDict[$Name]
+        }
         return $null
     }
-    return $Object.$Name
+
+    $dictionary = $Object -as [System.Collections.IDictionary]
+    if ($null -ne $dictionary) {
+        if ($dictionary.Contains($Name)) {
+            return $dictionary[$Name]
+        }
+        return $null
+    }
+
+    $prop = $Object.PSObject.Properties[$Name]
+    if ($null -ne $prop) {
+        return $prop.Value
+    }
+
+    return $null
 }
 
 function Get-StringList {
