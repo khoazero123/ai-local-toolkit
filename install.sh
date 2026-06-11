@@ -66,6 +66,22 @@ prompt_keywords() {
   printf '%s' "$input"
 }
 
+prompt_continue_message() {
+  local default_message="$1"
+  local locale="$2"
+  echo
+  echo "Auto-continue prompt sent when keywords match (Enter = default):"
+  echo "Detected locale: $locale"
+  echo "Default: $default_message"
+  read -r -p "Continue prompt: " input || true
+  input="${input//$'\r'/}"
+  if [[ -z "$input" ]]; then
+    printf '%s' "$default_message"
+    return 0
+  fi
+  printf '%s' "$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+}
+
 prompt_yes_no() {
   local question="$1"
   local default_yes="$2"
@@ -244,11 +260,12 @@ main() {
   continue_message="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['continue_message'])")"
   tail_length="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['tail_length'])")"
   max_loops="$(echo "$defaults_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['max_continue_loops'])")"
-  ok "Using $locale defaults (continue message: $continue_message)"
+  ok "Using $locale locale defaults"
 
   webhook_url="$(prompt_webhook_url)"
   keywords_input="$(prompt_keywords "$default_keywords" "$locale")"
   keywords_csv="$keywords_input"
+  continue_message="$(prompt_continue_message "$continue_message" "$locale")"
 
   local install_cursor=no install_codex=no
   if prompt_yes_no "Install for Cursor?" yes; then install_cursor=yes; fi

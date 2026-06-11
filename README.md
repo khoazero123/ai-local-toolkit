@@ -35,8 +35,9 @@ It will then ask for:
 2. **Auto-continue keywords** — defaults depend on detected locale:
    - Vietnamese: `tiếp tục`, `Bước tiếp`, `Việc tiếp`, `Bạn muốn`, `Bạn có muốn`
    - English: `continue`, `next step`, `what's next`, `would you like`, `do you want`
-3. **Cursor** — yes/no
-4. **Codex** — yes/no
+3. **Auto-continue prompt** — message sent when keywords match (default `Tiếp tục` or `Continue`)
+4. **Cursor** — yes/no
+5. **Codex** — yes/no
 
 Transcript locations scanned:
 

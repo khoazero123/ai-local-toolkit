@@ -284,6 +284,20 @@ function Prompt-Keywords([object]$Defaults) {
     return @($input.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
+function Prompt-ContinueMessage {
+    param([object]$Defaults)
+
+    Write-Host ""
+    Write-Host "Auto-continue prompt sent when keywords match (Enter = default):" -ForegroundColor White
+    Write-Host "Detected locale: $($Defaults.locale)" -ForegroundColor DarkGray
+    Write-Host "Default: $($Defaults.continue_message)" -ForegroundColor DarkGray
+    $input = Read-Host "Continue prompt"
+    if ([string]::IsNullOrWhiteSpace($input)) {
+        return [string]$Defaults.continue_message
+    }
+    return $input.Trim()
+}
+
 function Prompt-YesNo([string]$Question, [bool]$DefaultYes = $true) {
     $suffix = if ($DefaultYes) { "[Y/n]" } else { "[y/N]" }
     $answer = Read-Host "$Question $suffix"
@@ -431,6 +445,7 @@ Write-Ok "Using $($defaults.locale) locale defaults"
 
 $webhookUrl = Prompt-WebhookUrl
 $keywords = Prompt-Keywords -Defaults $defaults
+$defaults.continue_message = Prompt-ContinueMessage -Defaults $defaults
 
 $installCursor = Prompt-YesNo "Install for Cursor?" $true
 $installCodex = Prompt-YesNo "Install for Codex?" $true
