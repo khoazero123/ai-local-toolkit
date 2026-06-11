@@ -39,18 +39,11 @@ function Get-ConfigField {
 
     if ($null -eq $Object) { return $null }
 
-    $genericDict = $Object -as [System.Collections.Generic.IDictionary[string, object]]
-    if ($null -ne $genericDict) {
-        if ($genericDict.ContainsKey($Name)) {
-            return $genericDict[$Name]
-        }
-        return $null
-    }
-
-    $dictionary = $Object -as [System.Collections.IDictionary]
-    if ($null -ne $dictionary) {
-        if ($dictionary.Contains($Name)) {
-            return $dictionary[$Name]
+    if ($Object -is [System.Collections.IDictionary]) {
+        foreach ($key in @($Object.Keys)) {
+            if ([string]$key -eq $Name) {
+                return $Object[$key]
+            }
         }
         return $null
     }
