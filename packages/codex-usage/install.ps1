@@ -274,7 +274,7 @@ function Merge-WatchWebhookConfig {
   $toolDir = Get-CodexUsageToolDir -CodexHome $CodexHome
   $watchConfigPath = Join-Path $toolDir "codex-reset-watch.config.json"
   $hookConfigPath = Get-AgentWebhookHookConfigPath -CodexHome $CodexHome
-  if (-not (Test-Path $watchConfigPath)) { return }
+  if (-not (Test-Path $watchConfigPath)) { return "" }
 
   $watch = Get-Content $watchConfigPath -Raw | ConvertFrom-Json
   $changed = $false
@@ -297,6 +297,55 @@ function Merge-WatchWebhookConfig {
     $json = $watch | ConvertTo-Json -Depth 5
     [System.IO.File]::WriteAllText($watchConfigPath, "$json`n", [System.Text.UTF8Encoding]::new($false))
   }
+
+  $url = [string]$watch.webhookUrl
+  if ([string]::IsNullOrWhiteSpace($url)) { return "" }
+  return $url.Trim()
+}
+
+function Prompt-WebhookUrl {
+  param([string]$Default = "")
+
+  if ($env:AI_LOCAL_TOOLKIT_NONINTERACTIVE -eq "1") {
+    return $Default
+  }
+
+  Write-Host ""
+  Write-Host "Webhook URL for reset notifications (leave empty to skip):" -ForegroundColor White
+  if ([string]::IsNullOrWhiteSpace($Default)) {
+    $answer = Read-Host "Webhook URL"
+    if ([string]::IsNullOrWhiteSpace($answer)) { return "" }
+    return $answer.Trim()
+  }
+
+  $answer = Read-Host "Webhook URL [$Default]"
+  if ([string]::IsNullOrWhiteSpace($answer)) { return $Default.Trim() }
+  return $answer.Trim()
+}
+
+function Configure-WatchWebhookConfig {
+  param([string]$CodexHome)
+
+  $linkedUrl = Merge-WatchWebhookConfig -CodexHome $CodexHome
+  if (-not [string]::IsNullOrWhiteSpace($linkedUrl)) {
+    return
+  }
+
+  $toolDir = Get-CodexUsageToolDir -CodexHome $CodexHome
+  $watchConfigPath = Join-Path $toolDir "codex-reset-watch.config.json"
+  if (-not (Test-Path $watchConfigPath)) { return }
+
+  $webhookUrl = Prompt-WebhookUrl
+  if ([string]::IsNullOrWhiteSpace($webhookUrl)) {
+    Write-Warn "No webhook URL configured; reset notifications will be skipped until webhookUrl is set."
+    return
+  }
+
+  $watch = Get-Content $watchConfigPath -Raw | ConvertFrom-Json
+  $watch | Add-Member -NotePropertyName webhookUrl -NotePropertyValue $webhookUrl -Force
+  $json = $watch | ConvertTo-Json -Depth 5
+  [System.IO.File]::WriteAllText($watchConfigPath, "$json`n", [System.Text.UTF8Encoding]::new($false))
+  Write-Ok "Saved webhook URL to codex-reset-watch.config.json"
 }
 
 function Start-CodexResetWatcher {
@@ -330,7 +379,7 @@ $toolDir = Get-CodexUsageToolDir -CodexHome $codexHome
 Ensure-NodeJs
 Ensure-Pm2
 Install-CodexUsageFiles -PackageRoot $packageRoot -CodexHome $codexHome
-Merge-WatchWebhookConfig -CodexHome $codexHome
+Configure-WatchWebhookConfig -CodexHome $codexHome
 
 if (-not (Test-CodexAuth -CodexHome $codexHome)) {
   Write-Warn "Codex auth.json not found at $codexHome\auth.json"

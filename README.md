@@ -108,8 +108,9 @@ The installer will:
 1. Check **Node.js** — if missing, ask to install via **nvm-windows**
 2. Check **PM2** — if missing, ask to install with `npm install -g pm2`
 3. Copy runtime files to `~/.codex/tools/codex-usage/`
-4. Optionally start the PM2 watcher
-5. Optionally register **Task Scheduler** `CodexResetWatchPM2` (boot + logon)
+4. Link or prompt for **webhook URL** (reset notifications)
+5. Optionally start the PM2 watcher
+6. Optionally register **Task Scheduler** `CodexResetWatchPM2` (boot + logon)
 
 ### Manual commands (after install)
 
