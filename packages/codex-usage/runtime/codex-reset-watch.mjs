@@ -23,6 +23,9 @@ const DEFAULTS = {
   threadSelection: "latest",
   threadId: null,
   usageUrl: "https://chatgpt.com/backend-api/wham/usage",
+  webhookUrl: "",
+  notifyOnReset: true,
+  hookConfigPath: path.join(CODEX_HOME, "hooks", "hook-config.json"),
 };
 
 let pendingTimer = null;
@@ -50,7 +53,93 @@ function log(message, extra = undefined) {
 function loadConfig() {
   const config = { ...DEFAULTS, ...loadJson(CONFIG_PATH) };
   config.threadId = process.env.CODEX_RESET_THREAD_ID || config.threadId;
+  config.webhookUrl = resolveWebhookUrl(config);
   return config;
+}
+
+function resolveWebhookUrl(config) {
+  const explicit = process.env.CODEX_RESET_WATCH_WEBHOOK_URL || config.webhookUrl;
+  if (explicit) return String(explicit).trim();
+
+  const hookConfig = loadJson(config.hookConfigPath, {});
+  const fromHooks = hookConfig?.webhook_url;
+  return fromHooks ? String(fromHooks).trim() : "";
+}
+
+function detectResetOccurred(state, win, now) {
+  const prevReset = state.scheduledResetAtSeconds;
+  if (prevReset == null) return null;
+  if (win.reset_at === prevReset) return null;
+
+  const prevResetMs = Number(prevReset) * 1000;
+  if (!Number.isFinite(prevResetMs) || now < prevResetMs) return null;
+  if (state.lastNotifiedResetAt === prevReset) return null;
+
+  return {
+    completedResetAtSeconds: prevReset,
+    nextResetAtSeconds: win.reset_at,
+  };
+}
+
+async function sendResetWebhook(config, target, win, resetEvent) {
+  const webhookUrl = resolveWebhookUrl(config);
+  if (!webhookUrl || config.notifyOnReset === false) return;
+
+  const nextResetMs = Number(win.reset_at) * 1000;
+  const body = {
+    source: "codex",
+    direction: "token_reset",
+    event: "rate_limit_reset",
+    session_id: target.threadId,
+    thread_id: target.threadId,
+    reset_window: config.resetWindow,
+    text: `Codex rate limit reset. Usage now ${win.used_percent ?? "?"}%. Next reset at ${new Date(nextResetMs).toISOString()}.`,
+    completed_reset_at: new Date(Number(resetEvent.completedResetAtSeconds) * 1000).toISOString(),
+    completed_reset_at_seconds: resetEvent.completedResetAtSeconds,
+    next_reset_at: new Date(nextResetMs).toISOString(),
+    next_reset_at_seconds: win.reset_at,
+    used_percent: win.used_percent,
+    window: describeWindow(win),
+    timestamp: new Date().toISOString(),
+  };
+
+  const res = await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(12000),
+  });
+
+  if (!res.ok) {
+    const detail = (await res.text()).slice(0, 500);
+    throw new Error(`Webhook failed: HTTP ${res.status} ${detail}`);
+  }
+
+  log("reset webhook sent", {
+    completedResetAtSeconds: resetEvent.completedResetAtSeconds,
+    nextResetAtSeconds: resetEvent.nextResetAtSeconds,
+  });
+
+  const state = loadJson(STATE_PATH, {});
+  saveJson(STATE_PATH, {
+    ...state,
+    lastNotifiedResetAt: resetEvent.completedResetAtSeconds,
+    lastNotifiedAt: new Date().toISOString(),
+  });
+}
+
+async function maybeNotifyReset(config, state, win, target, now) {
+  const resetEvent = detectResetOccurred(state, win, now);
+  if (!resetEvent) return;
+
+  try {
+    await sendResetWebhook(config, target, win, resetEvent);
+  } catch (error) {
+    log("reset webhook failed", {
+      message: error instanceof Error ? error.message : String(error),
+      completedResetAtSeconds: resetEvent.completedResetAtSeconds,
+    });
+  }
 }
 
 function readSessionIndex(sessionIndexPath) {
@@ -277,6 +366,8 @@ async function checkAndSchedule({ armTimer = true } = {}) {
   if (!Number.isFinite(sendAtMs)) throw new Error(`Invalid reset_at: ${win.reset_at}`);
 
   const state = loadJson(STATE_PATH, {});
+  await maybeNotifyReset(config, state, win, target, now);
+
   const missed = findMissedSend(config, state, win.reset_at, now);
   if (missed?.resetAtSeconds != null) {
     log("detected missed send", {

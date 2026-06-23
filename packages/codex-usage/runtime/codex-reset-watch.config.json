@@ -5,5 +5,7 @@
   "checkIntervalMs": 900000,
   "sendLookbackMs": 1200000,
   "missedCatchUpMaxAgeMs": 86400000,
-  "prompt": "hi"
+  "prompt": "hi",
+  "webhookUrl": "",
+  "notifyOnReset": true
 }

@@ -145,6 +145,28 @@ Edit `~/.codex/codex-reset-watch.config.json`:
 | `checkIntervalMs` | `900000` | Re-check usage every 15 min |
 | `resetWindow` | `primary` | Rate-limit window to track |
 | `threadSelection` | `latest` | Resume latest Codex thread |
+| `webhookUrl` | `""` | Webhook URL (empty = use `~/.codex/hooks/hook-config.json`) |
+| `notifyOnReset` | `true` | POST webhook when quota window resets |
+
+### Reset webhook payload
+
+When the rate-limit window rolls over, watcher sends:
+
+```json
+{
+  "source": "codex",
+  "direction": "token_reset",
+  "event": "rate_limit_reset",
+  "session_id": "...",
+  "text": "Codex rate limit reset. Usage now 12%. Next reset at ...",
+  "completed_reset_at": "2026-06-23T06:12:03.000Z",
+  "next_reset_at": "2026-06-23T11:12:03.000Z",
+  "used_percent": 12,
+  "timestamp": "..."
+}
+```
+
+Skipped when `webhookUrl` is empty and no URL in `hooks/hook-config.json`, or `notifyOnReset` is `false`.
 
 ### Requirements
 

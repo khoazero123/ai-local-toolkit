@@ -18,6 +18,9 @@ function Write-Warn([string]$Message) {
 }
 
 function Prompt-YesNo([string]$Question, [bool]$DefaultYes = $true) {
+  if ($env:AI_LOCAL_TOOLKIT_NONINTERACTIVE -eq "1") {
+    return $DefaultYes
+  }
   $suffix = if ($DefaultYes) { "[Y/n]" } else { "[y/N]" }
   $answer = Read-Host "$Question $suffix"
   if ([string]::IsNullOrWhiteSpace($answer)) { return $DefaultYes }
@@ -36,8 +39,18 @@ function Get-RepoRoot {
 
   $git = Get-Command git -ErrorAction SilentlyContinue
   if ($git) {
-    & git clone --depth 1 $RepoHttps (Join-Path $tempRoot "repo") | Out-Null
-    return (Resolve-Path (Join-Path $tempRoot "repo")).Path
+    $clonePath = Join-Path $tempRoot "repo"
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+      & git clone --depth 1 $RepoHttps $clonePath 2>&1 | Out-Null
+    } finally {
+      $ErrorActionPreference = $prevEap
+    }
+    if (-not (Test-Path (Join-Path $clonePath ".git"))) {
+      throw "git clone failed for $RepoHttps"
+    }
+    return (Resolve-Path $clonePath).Path
   }
 
   $zipPath = Join-Path $tempRoot "repo.zip"
@@ -196,6 +209,36 @@ function Install-CodexUsageFiles {
   Write-Ok "Installed runtime files to $CodexHome"
 }
 
+function Merge-WatchWebhookConfig {
+  param([string]$CodexHome)
+
+  $watchConfigPath = Join-Path $CodexHome "codex-reset-watch.config.json"
+  $hookConfigPath = Join-Path $CodexHome "hooks\hook-config.json"
+  if (-not (Test-Path $watchConfigPath)) { return }
+
+  $watch = Get-Content $watchConfigPath -Raw | ConvertFrom-Json
+  $changed = $false
+
+  if ((Test-Path $hookConfigPath) -and [string]::IsNullOrWhiteSpace([string]$watch.webhookUrl)) {
+    $hook = Get-Content $hookConfigPath -Raw | ConvertFrom-Json
+    if (-not [string]::IsNullOrWhiteSpace([string]$hook.webhook_url)) {
+      $watch | Add-Member -NotePropertyName webhookUrl -NotePropertyValue ([string]$hook.webhook_url) -Force
+      $changed = $true
+      Write-Ok "Linked reset-watch webhook from hooks/hook-config.json"
+    }
+  }
+
+  if ($null -eq $watch.notifyOnReset) {
+    $watch | Add-Member -NotePropertyName notifyOnReset -NotePropertyValue $true -Force
+    $changed = $true
+  }
+
+  if ($changed) {
+    $json = $watch | ConvertTo-Json -Depth 5
+    [System.IO.File]::WriteAllText($watchConfigPath, "$json`n", [System.Text.UTF8Encoding]::new($false))
+  }
+}
+
 function Start-CodexResetWatcher {
   param([string]$CodexHome)
 
@@ -229,6 +272,7 @@ $codexHome = Get-CodexHome
 Ensure-NodeJs
 Ensure-Pm2
 Install-CodexUsageFiles -RepoRoot $repoRoot -CodexHome $codexHome
+Merge-WatchWebhookConfig -CodexHome $codexHome
 
 if (-not (Test-CodexAuth -CodexHome $codexHome)) {
   Write-Warn "Codex auth.json not found at $codexHome\auth.json"
