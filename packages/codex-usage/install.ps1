@@ -1,15 +1,6 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
-$BootstrapUrl = "https://cdn.jsdelivr.net/gh/khoazero123/ai-local-toolkit@main/install-codex-usage.ps1"
-$isPipedInstall = [string]::IsNullOrWhiteSpace($MyInvocation.PSCommandPath)
-if ($isPipedInstall -and $env:AI_LOCAL_TOOLKIT_INSTALL_REEXEC -ne "1") {
-  $env:AI_LOCAL_TOOLKIT_INSTALL_REEXEC = "1"
-  $latestInstaller = (Invoke-WebRequest -Uri $BootstrapUrl -UseBasicParsing).Content
-  Invoke-Expression $latestInstaller
-  return
-}
-
 $RepoHttps = "https://github.com/khoazero123/ai-local-toolkit.git"
 $RawBase = "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main"
 $ArchiveZipUrl = "https://codeload.github.com/khoazero123/ai-local-toolkit/zip/refs/heads/main"
@@ -37,9 +28,17 @@ function Prompt-YesNo([string]$Question, [bool]$DefaultYes = $true) {
   return @("y", "yes") -contains $answer.Trim().ToLowerInvariant()
 }
 
-function Get-RepoRoot {
+function Resolve-DownloadedPackageRoot([string]$RepoRoot) {
+  $packageRoot = Join-Path $RepoRoot "packages\codex-usage"
+  if (-not (Test-Path (Join-Path $packageRoot "runtime\codex-usage.mjs"))) {
+    throw "codex-usage package not found in downloaded repo"
+  }
+  return (Resolve-Path $packageRoot).Path
+}
+
+function Get-PackageRoot {
   $localRoot = $PSScriptRoot
-  if (-not [string]::IsNullOrWhiteSpace($localRoot) -and (Test-Path (Join-Path $localRoot "packages\codex-usage\runtime\codex-usage.mjs"))) {
+  if (-not [string]::IsNullOrWhiteSpace($localRoot) -and (Test-Path (Join-Path $localRoot "runtime\codex-usage.mjs"))) {
     return (Resolve-Path $localRoot).Path
   }
 
@@ -53,7 +52,7 @@ function Get-RepoRoot {
     Expand-Archive -Path $zipPath -DestinationPath $tempRoot -Force
     $zipRoot = Join-Path $tempRoot "ai-local-toolkit-main"
     if (Test-Path (Join-Path $zipRoot "packages\codex-usage\runtime\codex-usage.mjs")) {
-      return (Resolve-Path $zipRoot).Path
+      return (Resolve-DownloadedPackageRoot -RepoRoot $zipRoot)
     }
   } catch {
     Write-Warn "Zip download failed ($($_.Exception.Message)); trying git clone..."
@@ -72,7 +71,7 @@ function Get-RepoRoot {
     if (-not (Test-Path (Join-Path $clonePath ".git"))) {
       throw "git clone failed for $RepoHttps"
     }
-    return (Resolve-Path $clonePath).Path
+    return (Resolve-DownloadedPackageRoot -RepoRoot $clonePath)
   }
 
   throw "Could not download ai-local-toolkit (zip and git both unavailable)."
@@ -199,18 +198,59 @@ function Get-CodexHome {
   return (Join-Path $env:USERPROFILE ".codex")
 }
 
+function Get-CodexUsageToolDir([string]$CodexHome) {
+  return (Join-Path $CodexHome "tools\codex-usage")
+}
+
+function Get-AgentWebhookHookConfigPath([string]$CodexHome) {
+  $toolPath = Join-Path $CodexHome "tools\agent-webhook\hook-config.json"
+  $legacyPath = Join-Path $CodexHome "hooks\hook-config.json"
+  if (Test-Path $toolPath) { return $toolPath }
+  if (Test-Path $legacyPath) { return $legacyPath }
+  return $toolPath
+}
+
+function Migrate-LegacyCodexUsageFiles {
+  param(
+    [string]$CodexHome,
+    [string]$ToolDir
+  )
+
+  $names = @(
+    "codex-usage.mjs",
+    "codex-reset-watch.mjs",
+    "codex-reset-watch.config.json",
+    "ecosystem.config.cjs",
+    "codex-reset-watch-startup.ps1",
+    "register-codex-reset-watch-task.ps1",
+    "codex-reset-watch-state.json",
+    "codex-reset-watch.log",
+    "codex-reset-watch-startup.log"
+  )
+
+  foreach ($name in $names) {
+    $legacy = Join-Path $CodexHome $name
+    $dest = Join-Path $ToolDir $name
+    if ((Test-Path $legacy) -and -not (Test-Path $dest)) {
+      Move-Item -Path $legacy -Destination $dest -Force
+    }
+  }
+}
+
 function Install-CodexUsageFiles {
   param(
-    [string]$RepoRoot,
+    [string]$PackageRoot,
     [string]$CodexHome
   )
 
-  $runtimeDir = Join-Path $RepoRoot "packages\codex-usage\runtime"
+  $runtimeDir = Join-Path $PackageRoot "runtime"
   if (-not (Test-Path $runtimeDir)) {
     throw "Runtime package not found: $runtimeDir"
   }
 
-  New-Item -ItemType Directory -Path $CodexHome -Force | Out-Null
+  $toolDir = Get-CodexUsageToolDir -CodexHome $CodexHome
+  New-Item -ItemType Directory -Path $toolDir -Force | Out-Null
+  Migrate-LegacyCodexUsageFiles -CodexHome $CodexHome -ToolDir $toolDir
 
   $files = @(
     "codex-usage.mjs",
@@ -222,17 +262,18 @@ function Install-CodexUsageFiles {
   )
 
   foreach ($name in $files) {
-    Copy-Item -Path (Join-Path $runtimeDir $name) -Destination (Join-Path $CodexHome $name) -Force
+    Copy-Item -Path (Join-Path $runtimeDir $name) -Destination (Join-Path $toolDir $name) -Force
   }
 
-  Write-Ok "Installed runtime files to $CodexHome"
+  Write-Ok "Installed runtime files to $toolDir"
 }
 
 function Merge-WatchWebhookConfig {
   param([string]$CodexHome)
 
-  $watchConfigPath = Join-Path $CodexHome "codex-reset-watch.config.json"
-  $hookConfigPath = Join-Path $CodexHome "hooks\hook-config.json"
+  $toolDir = Get-CodexUsageToolDir -CodexHome $CodexHome
+  $watchConfigPath = Join-Path $toolDir "codex-reset-watch.config.json"
+  $hookConfigPath = Get-AgentWebhookHookConfigPath -CodexHome $CodexHome
   if (-not (Test-Path $watchConfigPath)) { return }
 
   $watch = Get-Content $watchConfigPath -Raw | ConvertFrom-Json
@@ -243,7 +284,7 @@ function Merge-WatchWebhookConfig {
     if (-not [string]::IsNullOrWhiteSpace([string]$hook.webhook_url)) {
       $watch | Add-Member -NotePropertyName webhookUrl -NotePropertyValue ([string]$hook.webhook_url) -Force
       $changed = $true
-      Write-Ok "Linked reset-watch webhook from hooks/hook-config.json"
+      Write-Ok "Linked reset-watch webhook from agent-webhook hook-config.json"
     }
   }
 
@@ -261,15 +302,12 @@ function Merge-WatchWebhookConfig {
 function Start-CodexResetWatcher {
   param([string]$CodexHome)
 
-  $ecosystem = Join-Path $CodexHome "ecosystem.config.cjs"
+  $toolDir = Get-CodexUsageToolDir -CodexHome $CodexHome
+  $ecosystem = Join-Path $toolDir "ecosystem.config.cjs"
   $env:CODEX_HOME = $CodexHome
+  $env:CODEX_USAGE_TOOL_DIR = $toolDir
 
-  $existing = & pm2 jlist 2>$null | ConvertFrom-Json -ErrorAction SilentlyContinue
-  if ($existing) {
-    foreach ($app in @($existing | Where-Object { $_.name -like "codex-reset-watch*" })) {
-      & pm2 delete $app.name 2>$null | Out-Null
-    }
-  }
+  & pm2 delete codex-reset-watch 2>$null | Out-Null
 
   & pm2 start $ecosystem --only codex-reset-watch | Write-Host
   & pm2 save | Write-Host
@@ -285,12 +323,13 @@ Write-Host ""
 Write-Host "Codex Usage + Reset Watch Installer (Windows)" -ForegroundColor Magenta
 Write-Host "=============================================" -ForegroundColor Magenta
 
-$repoRoot = Get-RepoRoot
+$packageRoot = Get-PackageRoot
 $codexHome = Get-CodexHome
+$toolDir = Get-CodexUsageToolDir -CodexHome $codexHome
 
 Ensure-NodeJs
 Ensure-Pm2
-Install-CodexUsageFiles -RepoRoot $repoRoot -CodexHome $codexHome
+Install-CodexUsageFiles -PackageRoot $packageRoot -CodexHome $codexHome
 Merge-WatchWebhookConfig -CodexHome $codexHome
 
 if (-not (Test-CodexAuth -CodexHome $codexHome)) {
@@ -299,7 +338,7 @@ if (-not (Test-CodexAuth -CodexHome $codexHome)) {
 } else {
   Write-Info "Testing codex-usage..."
   try {
-    & node (Join-Path $codexHome "codex-usage.mjs")
+    & node (Join-Path $toolDir "codex-usage.mjs")
     Write-Ok "codex-usage ran successfully"
   } catch {
     Write-Warn "codex-usage test failed: $($_.Exception.Message)"
@@ -313,7 +352,7 @@ if ($startWatcher) {
 
 $registerTask = Prompt-YesNo "Register Windows Task Scheduler for boot/logon startup?" $false
 if ($registerTask) {
-  $registerScript = Join-Path $codexHome "register-codex-reset-watch-task.ps1"
+  $registerScript = Join-Path $toolDir "register-codex-reset-watch-task.ps1"
   & powershell -NoProfile -ExecutionPolicy Bypass -File $registerScript
 }
 
@@ -321,7 +360,7 @@ Write-Host ""
 Write-Ok "Installation complete."
 Write-Host ""
 Write-Host "Quick commands:" -ForegroundColor White
-Write-Host "  node $codexHome\codex-usage.mjs"
+Write-Host "  node $toolDir\codex-usage.mjs"
 Write-Host "  pm2 status codex-reset-watch"
 Write-Host "  pm2 logs codex-reset-watch"
-Write-Host "  Get-Content $codexHome\codex-reset-watch.log -Tail 20"
+Write-Host "  Get-Content $toolDir\codex-reset-watch.log -Tail 20"

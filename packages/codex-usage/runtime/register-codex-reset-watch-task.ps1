@@ -16,9 +16,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$ToolDir = $PSScriptRoot
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }
 if (-not $StartupScript) {
-  $StartupScript = Join-Path $CodexHome "codex-reset-watch-startup.ps1"
+  $StartupScript = Join-Path $ToolDir "codex-reset-watch-startup.ps1"
 }
 
 if (-not (Test-Path $StartupScript)) {

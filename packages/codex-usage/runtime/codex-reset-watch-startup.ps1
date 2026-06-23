@@ -1,10 +1,11 @@
 $ErrorActionPreference = "Stop"
 
+$ToolDir = $PSScriptRoot
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }
-$LogFile = Join-Path $CodexHome "codex-reset-watch-startup.log"
+$LogFile = Join-Path $ToolDir "codex-reset-watch-startup.log"
 $Pm2Home = if ($env:PM2_HOME) { $env:PM2_HOME } else { Join-Path $env:USERPROFILE ".pm2" }
-$WatcherScript = Join-Path $CodexHome "codex-reset-watch.mjs"
-$EcosystemFile = Join-Path $CodexHome "ecosystem.config.cjs"
+$WatcherScript = Join-Path $ToolDir "codex-reset-watch.mjs"
+$EcosystemFile = Join-Path $ToolDir "ecosystem.config.cjs"
 
 function Write-Log([string]$Message) {
   $line = "[{0}] {1}" -f (Get-Date -Format "o"), $Message
@@ -41,8 +42,9 @@ function Test-WatcherProcessOnline {
 function Start-WatcherNode {
   $nodeExe = Resolve-NodeExe
   $env:CODEX_HOME = $CodexHome
-  $env:CODEX_RESET_WATCH_CONFIG = Join-Path $CodexHome "codex-reset-watch.config.json"
-  $process = Start-Process -FilePath $nodeExe -ArgumentList @($WatcherScript) -WorkingDirectory $CodexHome -WindowStyle Hidden -PassThru
+  $env:CODEX_USAGE_TOOL_DIR = $ToolDir
+  $env:CODEX_RESET_WATCH_CONFIG = Join-Path $ToolDir "codex-reset-watch.config.json"
+  $process = Start-Process -FilePath $nodeExe -ArgumentList @($WatcherScript) -WorkingDirectory $ToolDir -WindowStyle Hidden -PassThru
   Write-Log "started node watcher pid=$($process.Id)"
 }
 
@@ -84,11 +86,12 @@ function Test-Pm2WatcherOnline {
 try {
   $runAs = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
   $env:CODEX_HOME = $CodexHome
+  $env:CODEX_USAGE_TOOL_DIR = $ToolDir
   $env:PM2_HOME = $Pm2Home
   $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
     [Environment]::GetEnvironmentVariable("Path", "User")
 
-  Write-Log "startup begin runAs=$runAs codexHome=$CodexHome"
+  Write-Log "startup begin runAs=$runAs toolDir=$ToolDir codexHome=$CodexHome"
 
   if (-not (Wait-ForNetwork)) {
     Write-Log "network not ready; continuing anyway"

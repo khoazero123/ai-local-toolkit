@@ -2,7 +2,7 @@
 
 Local automation utilities for **Cursor** and **Codex** on your machine.
 
-Each feature has its own installer. Expand a section below to copy the install command.
+Each feature has its own installer and installs into its own folder under `tools/`.
 
 ---
 
@@ -14,19 +14,19 @@ Sends webhooks when the user or agent chats, and automatically sends a continue 
 ### Windows (PowerShell)
 
 ```powershell
-irm "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main/install.ps1" | iex
+irm "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main/packages/agent-webhook/install.ps1" | iex
 ```
 
 ### Linux / macOS
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main/install.sh" | bash
+curl -fsSL "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main/packages/agent-webhook/install.sh" | bash
 ```
 
 Or with `wget`:
 
 ```bash
-wget -qO- "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main/install.sh" | bash
+wget -qO- "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main/packages/agent-webhook/install.sh" | bash
 ```
 
 Append `?v=<commit>` to the URL if your shell cached an older installer script.
@@ -34,12 +34,12 @@ Append `?v=<commit>` to the URL if your shell cached an older installer script.
 ### Install from a local clone
 
 ```powershell
-cd path\to\ai-local-toolkit
+cd path\to\ai-local-toolkit\packages\agent-webhook
 .\install.ps1
 ```
 
 ```bash
-cd ai-local-toolkit
+cd ai-local-toolkit/packages/agent-webhook
 bash install.sh
 ```
 
@@ -47,8 +47,8 @@ bash install.sh
 
 | Platform | Installer | Runtime hooks |
 |----------|-----------|---------------|
-| Windows | PowerShell 5.1+ | `.cmd` + `.ps1` in `runtime/windows/` |
-| Linux / macOS | `bash` | `bash` scripts in `runtime/unix/` |
+| Windows | PowerShell 5.1+ | `.cmd` + `.ps1` in `packages/agent-webhook/runtime/windows/` |
+| Linux / macOS | `bash` | `bash` scripts in `packages/agent-webhook/runtime/unix/` |
 
 **Linux / macOS also needs:** `curl`, `jq`
 
@@ -62,10 +62,12 @@ After installing, open Codex and run:
 
 ### Files created
 
-| Tool | Path |
-|------|------|
-| Cursor hooks | `~/.cursor/hooks/` + `~/.cursor/hooks.json` |
-| Codex hooks | `~/.codex/hooks/` + `~/.codex/hooks.json` |
+| App | Tool folder | Registry |
+|-----|-------------|----------|
+| Cursor | `~/.cursor/tools/agent-webhook/` | `~/.cursor/hooks.json` |
+| Codex | `~/.codex/tools/agent-webhook/` | `~/.codex/hooks.json` |
+
+Legacy installs at `~/.cursor/hooks/` or `~/.codex/hooks/` are migrated automatically on reinstall.
 
 </details>
 
@@ -76,7 +78,7 @@ After installing, open Codex and run:
 
 Check Codex rate-limit usage from the CLI and run a background watcher that sends a prompt shortly after each quota reset (no Codex desktop app required).
 
-**What it installs into `~/.codex/`:**
+**Install folder:** `~/.codex/tools/codex-usage/`
 
 - `codex-usage.mjs` — print usage table from `/backend-api/wham/usage`
 - `codex-reset-watch.mjs` — PM2 daemon: poll usage, schedule prompt after reset + delay
@@ -84,30 +86,28 @@ Check Codex rate-limit usage from the CLI and run a background watcher that send
 - `codex-reset-watch-startup.ps1` — boot/logon helper
 - `register-codex-reset-watch-task.ps1` — Task Scheduler registration
 
+Codex app data (`auth.json`, `.sandbox-bin/`, `session_index.jsonl`) stays at `~/.codex/` root.
+
 ### Windows — one-line install
 
 ```powershell
-irm "https://cdn.jsdelivr.net/gh/khoazero123/ai-local-toolkit@main/install-codex-usage.ps1" | iex
+irm "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main/packages/codex-usage/install.ps1" | iex
 ```
 
-GitHub raw (may lag behind by a few minutes after pushes):
-
-```powershell
-irm "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main/install-codex-usage.ps1" | iex
-```
+Append `?v=<commit>` to the URL if your shell cached an older installer script.
 
 ### Windows — from local clone
 
 ```powershell
-cd path\to\ai-local-toolkit
-.\install-codex-usage.ps1
+cd path\to\ai-local-toolkit\packages\codex-usage
+.\install.ps1
 ```
 
 The installer will:
 
 1. Check **Node.js** — if missing, ask to install via **nvm-windows**
 2. Check **PM2** — if missing, ask to install with `npm install -g pm2`
-3. Copy runtime files to `~/.codex`
+3. Copy runtime files to `~/.codex/tools/codex-usage/`
 4. Optionally start the PM2 watcher
 5. Optionally register **Task Scheduler** `CodexResetWatchPM2` (boot + logon)
 
@@ -116,13 +116,13 @@ The installer will:
 Check usage:
 
 ```powershell
-node $env:USERPROFILE\.codex\codex-usage.mjs
+node $env:USERPROFILE\.codex\tools\codex-usage\codex-usage.mjs
 ```
 
 PM2 watcher:
 
 ```powershell
-pm2 start $env:USERPROFILE\.codex\ecosystem.config.cjs --only codex-reset-watch
+pm2 start $env:USERPROFILE\.codex\tools\codex-usage\ecosystem.config.cjs --only codex-reset-watch
 pm2 save
 pm2 status codex-reset-watch
 pm2 logs codex-reset-watch
@@ -131,18 +131,18 @@ pm2 logs codex-reset-watch
 Register boot task (no login required — uses SYSTEM if Windows account has no password):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File $env:USERPROFILE\.codex\register-codex-reset-watch-task.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File $env:USERPROFILE\.codex\tools\codex-usage\register-codex-reset-watch-task.ps1
 ```
 
 View watcher log:
 
 ```powershell
-Get-Content $env:USERPROFILE\.codex\codex-reset-watch.log -Tail 20
+Get-Content $env:USERPROFILE\.codex\tools\codex-usage\codex-reset-watch.log -Tail 20
 ```
 
 ### Config
 
-Edit `~/.codex/codex-reset-watch.config.json`:
+Edit `~/.codex/tools/codex-usage/codex-reset-watch.config.json`:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
@@ -151,7 +151,7 @@ Edit `~/.codex/codex-reset-watch.config.json`:
 | `checkIntervalMs` | `900000` | Re-check usage every 15 min |
 | `resetWindow` | `primary` | Rate-limit window to track |
 | `threadSelection` | `latest` | Resume latest Codex thread |
-| `webhookUrl` | `""` | Webhook URL (empty = use `~/.codex/hooks/hook-config.json`) |
+| `webhookUrl` | `""` | Webhook URL (empty = use `~/.codex/tools/agent-webhook/hook-config.json`) |
 | `notifyOnReset` | `true` | POST webhook when quota window resets |
 
 ### Reset webhook payload
@@ -172,7 +172,7 @@ When the rate-limit window rolls over, watcher sends:
 }
 ```
 
-Skipped when `webhookUrl` is empty and no URL in `hooks/hook-config.json`, or `notifyOnReset` is `false`.
+Skipped when `webhookUrl` is empty and no URL in agent-webhook `hook-config.json`, or `notifyOnReset` is `false`.
 
 ### Requirements
 
@@ -187,6 +187,7 @@ Skipped when `webhookUrl` is empty and no URL in `hooks/hook-config.json`, or `n
 - Watcher uses `codex exec resume` — **Codex desktop app does not need to stay open**
 - If the PC was off during a scheduled send, the watcher catches up on next start (`missed-after-offline`)
 - Do **not** run `pm2 start codex-reset-watch.pm2.cjs` directly — use `ecosystem.config.cjs` only
+- Files previously installed flat in `~/.codex/` are migrated to `tools/codex-usage/` on reinstall
 
 </details>
 
@@ -195,14 +196,33 @@ Skipped when `webhookUrl` is empty and no URL in `hooks/hook-config.json`, or `n
 ## Repository layout
 
 ```
-install.ps1                      # Agent Webhook + Auto Continue (Windows)
-install.sh                       # Agent Webhook + Auto Continue (Unix)
-install-codex-usage.ps1          # Codex Usage + Reset Watch (Windows)
-config.defaults.json             # Webhook locale defaults
-runtime/windows/                 # Webhook hook runtime (Windows)
-runtime/unix/                    # Webhook hook runtime (Unix)
-packages/codex-usage/runtime/    # Codex usage + reset watch scripts
-scripts/locale_defaults.sh       # Locale detection (Unix installer)
+packages/
+  agent-webhook/
+    install.ps1                          # Windows installer
+    install.sh                           # Linux/macOS installer
+    config.defaults.json                 # Webhook locale defaults
+    scripts/locale_defaults.sh           # Locale detection (Unix installer)
+    runtime/windows/                     # Windows hook runtime
+    runtime/unix/                        # Unix hook runtime
+  codex-usage/
+    install.ps1                          # Windows installer
+    runtime/                             # Codex usage + reset watch scripts
+```
+
+## Installed layout (example)
+
+```
+~/.codex/
+  auth.json                              # Codex app data (not from toolkit)
+  hooks.json                             # points to tools/agent-webhook/
+  tools/
+    agent-webhook/                       # webhook hooks + hook-config.json
+    codex-usage/                         # usage CLI + reset watcher
+
+~/.cursor/
+  hooks.json                             # points to tools/agent-webhook/
+  tools/
+    agent-webhook/                       # webhook hooks + hook-config.json
 ```
 
 ## License

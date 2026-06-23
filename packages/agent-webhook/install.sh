@@ -3,12 +3,23 @@ set -euo pipefail
 
 REPO_HTTPS="https://github.com/khoazero123/ai-local-toolkit.git"
 RAW_BASE="https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main"
+ARCHIVE_ZIP_URL="https://codeload.github.com/khoazero123/ai-local-toolkit/zip/refs/heads/main"
 
 info() { printf '\033[36m==> %s\033[0m\n' "$1"; }
 ok() { printf '\033[32mOK  %s\033[0m\n' "$1"; }
 warn() { printf '\033[33m!!  %s\033[0m\n' "$1"; }
 
-get_repo_root() {
+resolve_downloaded_package_root() {
+  local repo_root="$1"
+  local package_root="$repo_root/packages/agent-webhook"
+  if [[ ! -f "$package_root/runtime/unix/hook_common.sh" ]]; then
+    echo "agent-webhook package not found in downloaded repo" >&2
+    exit 1
+  fi
+  printf '%s' "$package_root"
+}
+
+get_package_root() {
   local script_dir=""
   if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,31 +35,34 @@ get_repo_root() {
   temp_root="$(mktemp -d)"
   if command -v git >/dev/null 2>&1; then
     git clone --depth 1 "$REPO_HTTPS" "$temp_root/repo" >/dev/null
-    printf '%s' "$temp_root/repo"
+    resolve_downloaded_package_root "$temp_root/repo"
     return 0
   fi
 
   local zip_path="$temp_root/repo.zip"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$RAW_BASE/archive/refs/heads/main.zip" -o "$zip_path"
+    curl -fsSL "$ARCHIVE_ZIP_URL" -o "$zip_path"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$zip_path" "$RAW_BASE/archive/refs/heads/main.zip"
+    wget -qO "$zip_path" "$ARCHIVE_ZIP_URL"
   else
     echo "curl, wget, or git is required to download the repo." >&2
     exit 1
   fi
 
   unzip -q "$zip_path" -d "$temp_root"
-  printf '%s' "$temp_root/ai-local-toolkit-main"
+  resolve_downloaded_package_root "$temp_root/ai-local-toolkit-main"
 }
 
 find_existing_hook_config() {
   local newest="" newest_mtime=0 mtime candidate
   local candidates=(
+    "$HOME/.cursor/tools/agent-webhook/hook-config.json"
+    "$HOME/.codex/tools/agent-webhook/hook-config.json"
     "$HOME/.cursor/hooks/hook-config.json"
     "$HOME/.codex/hooks/hook-config.json"
   )
   if [[ -n "${CODEX_HOME:-}" ]]; then
+    candidates+=("$CODEX_HOME/tools/agent-webhook/hook-config.json")
     candidates+=("$CODEX_HOME/hooks/hook-config.json")
   fi
 
@@ -172,9 +186,9 @@ require_unix_tools() {
 }
 
 resolve_locale_defaults() {
-  local repo_root="$1"
-  local defaults_file="$repo_root/config.defaults.json"
-  bash "$repo_root/scripts/locale_defaults.sh" resolve auto "$defaults_file"
+  local package_root="$1"
+  local defaults_file="$package_root/config.defaults.json"
+  bash "$package_root/scripts/locale_defaults.sh" resolve auto "$defaults_file"
 }
 
 write_hook_config() {
@@ -208,18 +222,33 @@ write_hook_config() {
   printf '\n' >>"$target_dir/hook-config.json"
 }
 
+migrate_legacy_hook_files() {
+  local legacy_dir="$1"
+  local tool_dir="$2"
+  [[ -d "$legacy_dir" ]] || return 0
+  mkdir -p "$tool_dir"
+  local item
+  for item in "$legacy_dir"/*; do
+    [[ -f "$item" ]] || continue
+    local name
+    name="$(basename "$item")"
+    [[ -f "$tool_dir/$name" ]] || mv "$item" "$tool_dir/$name"
+  done
+}
+
 install_cursor_hooks() {
-  local repo_root="$1"
+  local package_root="$1"
   local webhook_url="$2"
   local keywords_csv="$3"
   local tail_length="$4"
   local max_loops="$5"
   local continue_message="$6"
   local cursor_root="$HOME/.cursor"
-  local hooks_dir="$cursor_root/hooks"
+  local hooks_dir="$cursor_root/tools/agent-webhook"
 
+  migrate_legacy_hook_files "$cursor_root/hooks" "$hooks_dir"
   mkdir -p "$hooks_dir"
-  cp "$repo_root/runtime/unix/"*.sh "$hooks_dir/"
+  cp "$package_root/runtime/unix/"*.sh "$hooks_dir/"
   chmod +x "$hooks_dir/"*.sh
 
   write_hook_config "$hooks_dir" "$webhook_url" "cursor" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
@@ -229,13 +258,13 @@ install_cursor_hooks() {
   "version": 1,
   "hooks": {
     "beforeSubmitPrompt": [
-      { "command": "bash ./hooks/cursor_before_prompt.sh", "timeout": 15 }
+      { "command": "bash ./tools/agent-webhook/cursor_before_prompt.sh", "timeout": 15 }
     ],
     "afterAgentResponse": [
-      { "command": "bash ./hooks/cursor_after_response.sh", "timeout": 15 }
+      { "command": "bash ./tools/agent-webhook/cursor_after_response.sh", "timeout": 15 }
     ],
     "stop": [
-      { "command": "bash ./hooks/cursor_stop.sh", "timeout": 10, "loop_limit": $max_loops }
+      { "command": "bash ./tools/agent-webhook/cursor_stop.sh", "timeout": 10, "loop_limit": $max_loops }
     ]
   }
 }
@@ -244,17 +273,18 @@ EOF
 }
 
 install_codex_hooks() {
-  local repo_root="$1"
+  local package_root="$1"
   local webhook_url="$2"
   local keywords_csv="$3"
   local tail_length="$4"
   local max_loops="$5"
   local continue_message="$6"
-  local codex_root="$HOME/.codex"
-  local hooks_dir="$codex_root/hooks"
+  local codex_root="${CODEX_HOME:-$HOME/.codex}"
+  local hooks_dir="$codex_root/tools/agent-webhook"
 
+  migrate_legacy_hook_files "$codex_root/hooks" "$hooks_dir"
   mkdir -p "$hooks_dir"
-  cp "$repo_root/runtime/unix/"*.sh "$hooks_dir/"
+  cp "$package_root/runtime/unix/"*.sh "$hooks_dir/"
   chmod +x "$hooks_dir/"*.sh
 
   write_hook_config "$hooks_dir" "$webhook_url" "codex" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
@@ -298,13 +328,13 @@ main() {
   echo "Agent Webhook + Auto Continue Installer (Unix)"
   echo "=============================================="
 
-  local repo_root defaults_json locale default_keywords keywords_input keywords_csv
+  local package_root defaults_json locale default_keywords keywords_input keywords_csv
   local tail_length max_loops continue_message webhook_url existing_webhook=""
-  repo_root="$(get_repo_root)"
+  package_root="$(get_package_root)"
   require_unix_tools
 
   info "Scanning Cursor/Codex transcripts to detect conversation language..."
-  defaults_json="$(resolve_locale_defaults "$repo_root")"
+  defaults_json="$(resolve_locale_defaults "$package_root")"
   locale="$(jq -r '.locale' <<<"$defaults_json")"
   default_keywords="$(jq -r '.keywords | join(", ")' <<<"$defaults_json")"
   continue_message="$(jq -r '.continue_message' <<<"$defaults_json")"
@@ -339,11 +369,11 @@ main() {
   fi
 
   if [[ "$install_cursor" == "yes" ]]; then
-    install_cursor_hooks "$repo_root" "$webhook_url" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
+    install_cursor_hooks "$package_root" "$webhook_url" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
   fi
 
   if [[ "$install_codex" == "yes" ]]; then
-    install_codex_hooks "$repo_root" "$webhook_url" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
+    install_codex_hooks "$package_root" "$webhook_url" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
   fi
 
   echo

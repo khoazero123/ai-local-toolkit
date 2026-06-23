@@ -3,12 +3,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
+const TOOL_DIR = process.env.CODEX_USAGE_TOOL_DIR || path.dirname(fileURLToPath(import.meta.url));
 const CODEX_HOME = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-const CONFIG_PATH = process.env.CODEX_RESET_WATCH_CONFIG || path.join(CODEX_HOME, "codex-reset-watch.config.json");
-const STATE_PATH = process.env.CODEX_RESET_WATCH_STATE || path.join(CODEX_HOME, "codex-reset-watch-state.json");
-const LOG_PATH = process.env.CODEX_RESET_WATCH_LOG || path.join(CODEX_HOME, "codex-reset-watch.log");
+const CONFIG_PATH = process.env.CODEX_RESET_WATCH_CONFIG || path.join(TOOL_DIR, "codex-reset-watch.config.json");
+const STATE_PATH = process.env.CODEX_RESET_WATCH_STATE || path.join(TOOL_DIR, "codex-reset-watch-state.json");
+const LOG_PATH = process.env.CODEX_RESET_WATCH_LOG || path.join(TOOL_DIR, "codex-reset-watch.log");
 
 const DEFAULTS = {
   authPath: path.join(CODEX_HOME, "auth.json"),
@@ -25,10 +27,21 @@ const DEFAULTS = {
   usageUrl: "https://chatgpt.com/backend-api/wham/usage",
   webhookUrl: "",
   notifyOnReset: true,
-  hookConfigPath: path.join(CODEX_HOME, "hooks", "hook-config.json"),
+  hookConfigPath: "",
 };
 
 let pendingTimer = null;
+
+function resolveHookConfigPath() {
+  const candidates = [
+    path.join(CODEX_HOME, "tools", "agent-webhook", "hook-config.json"),
+    path.join(CODEX_HOME, "hooks", "hook-config.json"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return candidates[0];
+}
 
 function loadJson(file, fallback = {}) {
   try {
@@ -53,6 +66,9 @@ function log(message, extra = undefined) {
 function loadConfig() {
   const config = { ...DEFAULTS, ...loadJson(CONFIG_PATH) };
   config.threadId = process.env.CODEX_RESET_THREAD_ID || config.threadId;
+  if (!config.hookConfigPath) {
+    config.hookConfigPath = resolveHookConfigPath();
+  }
   config.webhookUrl = resolveWebhookUrl(config);
   return config;
 }

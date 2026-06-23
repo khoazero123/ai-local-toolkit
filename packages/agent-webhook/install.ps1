@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoHttps = "https://github.com/khoazero123/ai-local-toolkit.git"
 $RawBase = "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main"
+$ArchiveZipUrl = "https://codeload.github.com/khoazero123/ai-local-toolkit/zip/refs/heads/main"
 $script:HookUtf8 = [System.Text.UTF8Encoding]::new($false)
 
 function Set-InstallerConsoleEncoding {
@@ -17,8 +18,8 @@ function Set-InstallerConsoleEncoding {
     }
 }
 
-function Read-DefaultConfig([string]$RepoRoot) {
-    $defaultsPath = Join-Path $RepoRoot "config.defaults.json"
+function Read-DefaultConfig([string]$PackageRoot) {
+    $defaultsPath = Join-Path $PackageRoot "config.defaults.json"
     $json = [System.IO.File]::ReadAllText($defaultsPath, $script:HookUtf8)
     return ($json | ConvertFrom-Json)
 }
@@ -87,7 +88,15 @@ function Write-Warn([string]$Message) {
     Write-Host "!!  $Message" -ForegroundColor Yellow
 }
 
-function Get-RepoRoot {
+function Resolve-DownloadedPackageRoot([string]$RepoRoot) {
+    $packageRoot = Join-Path $RepoRoot "packages\agent-webhook"
+    if (-not (Test-Path (Join-Path $packageRoot "runtime\windows\hook-lib.ps1"))) {
+        throw "agent-webhook package not found in downloaded repo"
+    }
+    return (Resolve-Path $packageRoot).Path
+}
+
+function Get-PackageRoot {
     $localRoot = $PSScriptRoot
     if (-not [string]::IsNullOrWhiteSpace($localRoot) -and (Test-Path (Join-Path $localRoot "runtime\windows\hook-lib.ps1"))) {
         return (Resolve-Path $localRoot).Path
@@ -99,14 +108,15 @@ function Get-RepoRoot {
 
     $git = Get-Command git -ErrorAction SilentlyContinue
     if ($git) {
-        & git clone --depth 1 $RepoHttps (Join-Path $tempRoot "repo") | Out-Null
-        return (Resolve-Path (Join-Path $tempRoot "repo")).Path
+        $clonePath = Join-Path $tempRoot "repo"
+        & git clone --depth 1 $RepoHttps $clonePath | Out-Null
+        return (Resolve-DownloadedPackageRoot -RepoRoot $clonePath)
     }
 
     $zipPath = Join-Path $tempRoot "repo.zip"
-    Invoke-WebRequest -Uri "$RawBase/archive/refs/heads/main.zip" -OutFile $zipPath
+    Invoke-WebRequest -Uri $ArchiveZipUrl -OutFile $zipPath
     Expand-Archive -Path $zipPath -DestinationPath $tempRoot -Force
-    return (Resolve-Path (Join-Path $tempRoot "ai-local-toolkit-main")).Path
+    return (Resolve-DownloadedPackageRoot -RepoRoot (Join-Path $tempRoot "ai-local-toolkit-main"))
 }
 
 function Test-VietnameseText {
@@ -278,30 +288,32 @@ function Detect-LocaleFromTranscripts {
 }
 
 function Resolve-LocaleDefaults {
-    param([string]$RepoRoot)
+    param([string]$PackageRoot)
 
     try {
         $locale = Detect-LocaleFromTranscripts
-        $config = Read-DefaultConfig -RepoRoot $RepoRoot
+        $config = Read-DefaultConfig -PackageRoot $PackageRoot
         return (Build-LocaleDefaults -Config $config -Locale $locale)
     }
     catch {
         Write-Warn "Locale detection failed ($($_.Exception.Message)); using English defaults."
-        $config = Read-DefaultConfig -RepoRoot $RepoRoot
+        $config = Read-DefaultConfig -PackageRoot $PackageRoot
         return (Build-LocaleDefaults -Config $config -Locale "en")
     }
 }
 
 function Get-ExistingHookConfigPath {
     $paths = @(
+        (Join-Path $env:USERPROFILE ".cursor\tools\agent-webhook\hook-config.json"),
+        (Join-Path $env:USERPROFILE ".codex\tools\agent-webhook\hook-config.json"),
         (Join-Path $env:USERPROFILE ".cursor\hooks\hook-config.json"),
         (Join-Path $env:USERPROFILE ".codex\hooks\hook-config.json")
     )
     if ($env:CODEX_HOME) {
-        $codexPath = Join-Path $env:CODEX_HOME "hooks\hook-config.json"
-        if ($paths -notcontains $codexPath) {
-            $paths += $codexPath
-        }
+        $codexToolPath = Join-Path $env:CODEX_HOME "tools\agent-webhook\hook-config.json"
+        $codexLegacyPath = Join-Path $env:CODEX_HOME "hooks\hook-config.json"
+        if ($paths -notcontains $codexToolPath) { $paths += $codexToolPath }
+        if ($paths -notcontains $codexLegacyPath) { $paths += $codexLegacyPath }
     }
 
     $newestPath = $null
@@ -487,19 +499,36 @@ function New-HookConfigJson {
     return ($payload | ConvertTo-Json -Compress -Depth 5)
 }
 
+function Migrate-LegacyHookFiles {
+    param(
+        [string]$LegacyDir,
+        [string]$ToolDir
+    )
+
+    if (-not (Test-Path $LegacyDir)) { return }
+    New-Item -ItemType Directory -Path $ToolDir -Force | Out-Null
+    foreach ($item in Get-ChildItem -Path $LegacyDir -File -ErrorAction SilentlyContinue) {
+        $dest = Join-Path $ToolDir $item.Name
+        if (-not (Test-Path $dest)) {
+            Move-Item -Path $item.FullName -Destination $dest -Force
+        }
+    }
+}
+
 function Install-CursorHooks {
     param(
-        [string]$RepoRoot,
+        [string]$PackageRoot,
         [string]$WebhookUrl,
         [object[]]$Keywords,
         [object]$Defaults
     )
 
     $cursorRoot = Join-Path $env:USERPROFILE ".cursor"
-    $hooksDir = Join-Path $cursorRoot "hooks"
+    $hooksDir = Join-Path $cursorRoot "tools\agent-webhook"
+    Migrate-LegacyHookFiles -LegacyDir (Join-Path $cursorRoot "hooks") -ToolDir $hooksDir
     New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
 
-    $runtimeDir = Join-Path $RepoRoot "runtime\windows"
+    $runtimeDir = Join-Path $PackageRoot "runtime\windows"
     Copy-Item -Path (Join-Path $runtimeDir "hook-lib.ps1") -Destination $hooksDir -Force
     Copy-Item -Path (Join-Path $runtimeDir "webhook-on-prompt.*") -Destination $hooksDir -Force
     Copy-Item -Path (Join-Path $runtimeDir "webhook-on-response.*") -Destination $hooksDir -Force
@@ -519,14 +548,14 @@ function Install-CursorHooks {
         version = 1
         hooks   = @{
             beforeSubmitPrompt = @(
-                @{ command = "./hooks/webhook-on-prompt.cmd"; timeout = 15 }
+                @{ command = "./tools/agent-webhook/webhook-on-prompt.cmd"; timeout = 15 }
             )
             afterAgentResponse = @(
-                @{ command = "./hooks/webhook-on-response.cmd"; timeout = 15 },
-                @{ command = "./hooks/auto-continue-flag.cmd"; timeout = 10 }
+                @{ command = "./tools/agent-webhook/webhook-on-response.cmd"; timeout = 15 },
+                @{ command = "./tools/agent-webhook/auto-continue-flag.cmd"; timeout = 10 }
             )
             stop = @(
-                @{ command = "./hooks/auto-continue-stop.cmd"; timeout = 10; loop_limit = [int]$Defaults.max_continue_loops }
+                @{ command = "./tools/agent-webhook/auto-continue-stop.cmd"; timeout = 10; loop_limit = [int]$Defaults.max_continue_loops }
             )
         }
     }
@@ -539,17 +568,18 @@ function Install-CursorHooks {
 
 function Install-CodexHooks {
     param(
-        [string]$RepoRoot,
+        [string]$PackageRoot,
         [string]$WebhookUrl,
         [object[]]$Keywords,
         [object]$Defaults
     )
 
-    $codexRoot = Join-Path $env:USERPROFILE ".codex"
-    $hooksDir = Join-Path $codexRoot "hooks"
+    $codexRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }
+    $hooksDir = Join-Path $codexRoot "tools\agent-webhook"
+    Migrate-LegacyHookFiles -LegacyDir (Join-Path $codexRoot "hooks") -ToolDir $hooksDir
     New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
 
-    $runtimeDir = Join-Path $RepoRoot "runtime\windows"
+    $runtimeDir = Join-Path $PackageRoot "runtime\windows"
     Copy-Item -Path (Join-Path $runtimeDir "hook-lib.ps1") -Destination $hooksDir -Force
     Copy-Item -Path (Join-Path $runtimeDir "codex-user-prompt-webhook.*") -Destination $hooksDir -Force
     Copy-Item -Path (Join-Path $runtimeDir "codex-stop-webhook-continue.*") -Destination $hooksDir -Force
@@ -610,9 +640,9 @@ Write-Host ""
 Write-Host "Agent Webhook + Auto Continue Installer (Windows)" -ForegroundColor Magenta
 Write-Host "=================================================" -ForegroundColor Magenta
 
-$repoRoot = Get-RepoRoot
+$packageRoot = Get-PackageRoot
 Write-Info "Scanning Cursor/Codex transcripts to detect conversation language..."
-$defaults = Resolve-LocaleDefaults -RepoRoot $repoRoot
+$defaults = Resolve-LocaleDefaults -PackageRoot $packageRoot
 Write-Ok "Using $($defaults.locale) locale defaults"
 
 $existingConfigPath = Get-ExistingHookConfigPath
@@ -636,11 +666,11 @@ if (-not $installCursor -and -not $installCodex) {
 }
 
 if ($installCursor) {
-    Install-CursorHooks -RepoRoot $repoRoot -WebhookUrl $webhookUrl -Keywords $keywords -Defaults $defaults
+    Install-CursorHooks -PackageRoot $packageRoot -WebhookUrl $webhookUrl -Keywords $keywords -Defaults $defaults
 }
 
 if ($installCodex) {
-    Install-CodexHooks -RepoRoot $repoRoot -WebhookUrl $webhookUrl -Keywords $keywords -Defaults $defaults
+    Install-CodexHooks -PackageRoot $packageRoot -WebhookUrl $webhookUrl -Keywords $keywords -Defaults $defaults
 }
 
 Write-Host ""
