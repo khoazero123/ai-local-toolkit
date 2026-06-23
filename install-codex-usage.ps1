@@ -1,6 +1,15 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
+$BootstrapUrl = "https://cdn.jsdelivr.net/gh/khoazero123/ai-local-toolkit@main/install-codex-usage.ps1"
+$isPipedInstall = [string]::IsNullOrWhiteSpace($MyInvocation.PSCommandPath)
+if ($isPipedInstall -and $env:AI_LOCAL_TOOLKIT_INSTALL_REEXEC -ne "1") {
+  $env:AI_LOCAL_TOOLKIT_INSTALL_REEXEC = "1"
+  $latestInstaller = (Invoke-WebRequest -Uri $BootstrapUrl -UseBasicParsing).Content
+  Invoke-Expression $latestInstaller
+  return
+}
+
 $RepoHttps = "https://github.com/khoazero123/ai-local-toolkit.git"
 $RawBase = "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main"
 $ArchiveZipUrl = "https://codeload.github.com/khoazero123/ai-local-toolkit/zip/refs/heads/main"
