@@ -87,6 +87,12 @@ Check Codex rate-limit usage from the CLI and run a background watcher that send
 ### Windows — one-line install
 
 ```powershell
+irm "https://cdn.jsdelivr.net/gh/khoazero123/ai-local-toolkit@main/install-codex-usage.ps1" | iex
+```
+
+GitHub raw (may lag behind by a few minutes after pushes):
+
+```powershell
 irm "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main/install-codex-usage.ps1" | iex
 ```
 
