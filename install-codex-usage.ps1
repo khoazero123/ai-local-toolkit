@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoHttps = "https://github.com/khoazero123/ai-local-toolkit.git"
 $RawBase = "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main"
+$ArchiveZipUrl = "https://codeload.github.com/khoazero123/ai-local-toolkit/zip/refs/heads/main"
 $DefaultNodeVersion = "22"
 
 function Write-Info([string]$Message) {
@@ -39,7 +40,7 @@ function Get-RepoRoot {
 
   $zipPath = Join-Path $tempRoot "repo.zip"
   try {
-    Invoke-WebRequest -Uri "$RawBase/archive/refs/heads/main.zip" -OutFile $zipPath
+    Invoke-WebRequest -Uri $ArchiveZipUrl -OutFile $zipPath
     Expand-Archive -Path $zipPath -DestinationPath $tempRoot -Force
     $zipRoot = Join-Path $tempRoot "ai-local-toolkit-main"
     if (Test-Path (Join-Path $zipRoot "packages\codex-usage\runtime\codex-usage.mjs")) {
