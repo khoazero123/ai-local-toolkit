@@ -1,0 +1,9 @@
+{
+  "threadSelection": "latest",
+  "resetWindow": "primary",
+  "resetDelayMs": 180000,
+  "checkIntervalMs": 900000,
+  "sendLookbackMs": 1200000,
+  "missedCatchUpMaxAgeMs": 86400000,
+  "prompt": "hi"
+}

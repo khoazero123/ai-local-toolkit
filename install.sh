@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_HTTPS="https://github.com/khoazero123/agent-webhook-tracking-continues.git"
-RAW_BASE="https://raw.githubusercontent.com/khoazero123/agent-webhook-tracking-continues/main"
+REPO_HTTPS="https://github.com/khoazero123/ai-local-toolkit.git"
+RAW_BASE="https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main"
 
 info() { printf '\033[36m==> %s\033[0m\n' "$1"; }
 ok() { printf '\033[32mOK  %s\033[0m\n' "$1"; }
@@ -39,7 +39,7 @@ get_repo_root() {
   fi
 
   unzip -q "$zip_path" -d "$temp_root"
-  printf '%s' "$temp_root/agent-webhook-tracking-continues-main"
+  printf '%s' "$temp_root/ai-local-toolkit-main"
 }
 
 find_existing_hook_config() {

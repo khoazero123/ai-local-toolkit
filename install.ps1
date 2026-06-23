@@ -1,8 +1,8 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
-$RepoHttps = "https://github.com/khoazero123/agent-webhook-tracking-continues.git"
-$RawBase = "https://raw.githubusercontent.com/khoazero123/agent-webhook-tracking-continues/main"
+$RepoHttps = "https://github.com/khoazero123/ai-local-toolkit.git"
+$RawBase = "https://raw.githubusercontent.com/khoazero123/ai-local-toolkit/main"
 $script:HookUtf8 = [System.Text.UTF8Encoding]::new($false)
 
 function Set-InstallerConsoleEncoding {
@@ -106,7 +106,7 @@ function Get-RepoRoot {
     $zipPath = Join-Path $tempRoot "repo.zip"
     Invoke-WebRequest -Uri "$RawBase/archive/refs/heads/main.zip" -OutFile $zipPath
     Expand-Archive -Path $zipPath -DestinationPath $tempRoot -Force
-    return (Resolve-Path (Join-Path $tempRoot "agent-webhook-tracking-continues-main")).Path
+    return (Resolve-Path (Join-Path $tempRoot "ai-local-toolkit-main")).Path
 }
 
 function Test-VietnameseText {
