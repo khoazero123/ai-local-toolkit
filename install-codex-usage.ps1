@@ -37,6 +37,18 @@ function Get-RepoRoot {
   $tempRoot = Join-Path $env:TEMP ("ai-local-toolkit-codex-usage-" + [Guid]::NewGuid().ToString("N"))
   New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
+  $zipPath = Join-Path $tempRoot "repo.zip"
+  try {
+    Invoke-WebRequest -Uri "$RawBase/archive/refs/heads/main.zip" -OutFile $zipPath
+    Expand-Archive -Path $zipPath -DestinationPath $tempRoot -Force
+    $zipRoot = Join-Path $tempRoot "ai-local-toolkit-main"
+    if (Test-Path (Join-Path $zipRoot "packages\codex-usage\runtime\codex-usage.mjs")) {
+      return (Resolve-Path $zipRoot).Path
+    }
+  } catch {
+    Write-Warn "Zip download failed ($($_.Exception.Message)); trying git clone..."
+  }
+
   $git = Get-Command git -ErrorAction SilentlyContinue
   if ($git) {
     $clonePath = Join-Path $tempRoot "repo"
@@ -53,10 +65,7 @@ function Get-RepoRoot {
     return (Resolve-Path $clonePath).Path
   }
 
-  $zipPath = Join-Path $tempRoot "repo.zip"
-  Invoke-WebRequest -Uri "$RawBase/archive/refs/heads/main.zip" -OutFile $zipPath
-  Expand-Archive -Path $zipPath -DestinationPath $tempRoot -Force
-  return (Resolve-Path (Join-Path $tempRoot "ai-local-toolkit-main")).Path
+  throw "Could not download ai-local-toolkit (zip and git both unavailable)."
 }
 
 function Refresh-SessionPath {
