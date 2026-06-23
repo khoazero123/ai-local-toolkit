@@ -202,14 +202,6 @@ function Get-CodexUsageToolDir([string]$CodexHome) {
   return (Join-Path $CodexHome "tools\codex-usage")
 }
 
-function Get-AgentWebhookHookConfigPath([string]$CodexHome) {
-  $toolPath = Join-Path $CodexHome "tools\agent-webhook\hook-config.json"
-  $legacyPath = Join-Path $CodexHome "hooks\hook-config.json"
-  if (Test-Path $toolPath) { return $toolPath }
-  if (Test-Path $legacyPath) { return $legacyPath }
-  return $toolPath
-}
-
 function Migrate-LegacyCodexUsageFiles {
   param(
     [string]$CodexHome,
@@ -268,39 +260,98 @@ function Install-CodexUsageFiles {
   Write-Ok "Installed runtime files to $toolDir"
 }
 
-function Merge-WatchWebhookConfig {
+function Get-ExistingHookConfigPath {
+  $paths = @(
+    (Join-Path $env:USERPROFILE ".cursor\tools\agent-webhook\hook-config.json"),
+    (Join-Path $env:USERPROFILE ".codex\tools\agent-webhook\hook-config.json"),
+    (Join-Path $env:USERPROFILE ".cursor\hooks\hook-config.json"),
+    (Join-Path $env:USERPROFILE ".codex\hooks\hook-config.json")
+  )
+  if ($env:CODEX_HOME) {
+    $codexToolPath = Join-Path $env:CODEX_HOME "tools\agent-webhook\hook-config.json"
+    $codexLegacyPath = Join-Path $env:CODEX_HOME "hooks\hook-config.json"
+    if ($paths -notcontains $codexToolPath) { $paths += $codexToolPath }
+    if ($paths -notcontains $codexLegacyPath) { $paths += $codexLegacyPath }
+  }
+
+  $newestPath = $null
+  $newestTime = [datetime]::MinValue
+  foreach ($path in $paths) {
+    if (-not (Test-Path -LiteralPath $path)) { continue }
+    $item = Get-Item -LiteralPath $path
+    if ($item.LastWriteTime -gt $newestTime) {
+      $newestTime = $item.LastWriteTime
+      $newestPath = $item.FullName
+    }
+  }
+
+  return $newestPath
+}
+
+function Read-JsonConfig([string]$ConfigPath) {
+  if ([string]::IsNullOrWhiteSpace($ConfigPath)) { return $null }
+  if (-not (Test-Path -LiteralPath $ConfigPath)) { return $null }
+  try {
+    return (Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json)
+  } catch {
+    return $null
+  }
+}
+
+function Ensure-WatchConfigDefaults {
   param([string]$CodexHome)
 
   $toolDir = Get-CodexUsageToolDir -CodexHome $CodexHome
   $watchConfigPath = Join-Path $toolDir "codex-reset-watch.config.json"
-  $hookConfigPath = Get-AgentWebhookHookConfigPath -CodexHome $CodexHome
-  if (-not (Test-Path $watchConfigPath)) { return "" }
+  if (-not (Test-Path $watchConfigPath)) { return }
 
-  $watch = Get-Content $watchConfigPath -Raw | ConvertFrom-Json
-  $changed = $false
-
-  if ((Test-Path $hookConfigPath) -and [string]::IsNullOrWhiteSpace([string]$watch.webhookUrl)) {
-    $hook = Get-Content $hookConfigPath -Raw | ConvertFrom-Json
-    if (-not [string]::IsNullOrWhiteSpace([string]$hook.webhook_url)) {
-      $watch | Add-Member -NotePropertyName webhookUrl -NotePropertyValue ([string]$hook.webhook_url) -Force
-      $changed = $true
-      Write-Ok "Linked reset-watch webhook from agent-webhook hook-config.json"
-    }
-  }
+  $watch = Read-JsonConfig -ConfigPath $watchConfigPath
+  if ($null -eq $watch) { return }
 
   if ($null -eq $watch.notifyOnReset) {
     $watch | Add-Member -NotePropertyName notifyOnReset -NotePropertyValue $true -Force
-    $changed = $true
-  }
-
-  if ($changed) {
     $json = $watch | ConvertTo-Json -Depth 5
     [System.IO.File]::WriteAllText($watchConfigPath, "$json`n", [System.Text.UTF8Encoding]::new($false))
   }
+}
 
-  $url = [string]$watch.webhookUrl
-  if ([string]::IsNullOrWhiteSpace($url)) { return "" }
-  return $url.Trim()
+function Read-LineWithDefault {
+  param(
+    [string]$Prompt,
+    [string]$Default = ""
+  )
+
+  $prefix = "$Prompt "
+  $buffer = New-Object System.Text.StringBuilder
+  if (-not [string]::IsNullOrEmpty($Default)) {
+    [void]$buffer.Append($Default)
+  }
+
+  [Console]::Write($prefix + $buffer.ToString())
+
+  while ($true) {
+    $key = [Console]::ReadKey($true)
+    switch ($key.Key) {
+      "Enter" {
+        [Console]::WriteLine()
+        return $buffer.ToString()
+      }
+      "Backspace" {
+        if ($buffer.Length -gt 0) {
+          $buffer.Remove($buffer.Length - 1, 1) | Out-Null
+          $line = $prefix + $buffer.ToString()
+          [Console]::Write("`r$line ")
+          [Console]::Write("`r$line")
+        }
+      }
+      default {
+        if ($key.KeyChar -ge 32) {
+          [void]$buffer.Append($key.KeyChar)
+          [Console]::Write($key.KeyChar)
+        }
+      }
+    }
+  }
 }
 
 function Prompt-WebhookUrl {
@@ -311,41 +362,72 @@ function Prompt-WebhookUrl {
   }
 
   Write-Host ""
-  Write-Host "Webhook URL for reset notifications (leave empty to skip):" -ForegroundColor White
-  if ([string]::IsNullOrWhiteSpace($Default)) {
-    $answer = Read-Host "Webhook URL"
-    if ([string]::IsNullOrWhiteSpace($answer)) { return "" }
-    return $answer.Trim()
+  Write-Host "Webhook URL (leave empty to disable webhooks):" -ForegroundColor White
+  return (Read-LineWithDefault -Prompt "Webhook URL" -Default $Default).Trim()
+}
+
+function Get-ExistingWebhookUrlDefault {
+  param([string]$CodexHome)
+
+  $toolDir = Get-CodexUsageToolDir -CodexHome $CodexHome
+  $watchConfigPath = Join-Path $toolDir "codex-reset-watch.config.json"
+  $watch = Read-JsonConfig -ConfigPath $watchConfigPath
+  if ($null -ne $watch) {
+    $fromWatch = [string]$watch.webhookUrl
+    if (-not [string]::IsNullOrWhiteSpace($fromWatch)) {
+      return @{
+        Url = $fromWatch.Trim()
+        Source = $watchConfigPath
+      }
+    }
   }
 
-  $answer = Read-Host "Webhook URL [$Default]"
-  if ([string]::IsNullOrWhiteSpace($answer)) { return $Default.Trim() }
-  return $answer.Trim()
+  $hookConfigPath = Get-ExistingHookConfigPath
+  $hook = Read-JsonConfig -ConfigPath $hookConfigPath
+  if ($null -ne $hook) {
+    $fromHook = [string]$hook.webhook_url
+    if (-not [string]::IsNullOrWhiteSpace($fromHook)) {
+      return @{
+        Url = $fromHook.Trim()
+        Source = $hookConfigPath
+      }
+    }
+  }
+
+  return @{
+    Url = ""
+    Source = $null
+  }
 }
 
 function Configure-WatchWebhookConfig {
   param([string]$CodexHome)
 
-  $linkedUrl = Merge-WatchWebhookConfig -CodexHome $CodexHome
-  if (-not [string]::IsNullOrWhiteSpace($linkedUrl)) {
-    return
-  }
+  Ensure-WatchConfigDefaults -CodexHome $CodexHome
 
   $toolDir = Get-CodexUsageToolDir -CodexHome $CodexHome
   $watchConfigPath = Join-Path $toolDir "codex-reset-watch.config.json"
   if (-not (Test-Path $watchConfigPath)) { return }
 
-  $webhookUrl = Prompt-WebhookUrl
-  if ([string]::IsNullOrWhiteSpace($webhookUrl)) {
-    Write-Warn "No webhook URL configured; reset notifications will be skipped until webhookUrl is set."
-    return
+  $existing = Get-ExistingWebhookUrlDefault -CodexHome $CodexHome
+  if (-not [string]::IsNullOrWhiteSpace($existing.Source)) {
+    Write-Ok "Loaded previous webhook URL from $($existing.Source)"
   }
 
-  $watch = Get-Content $watchConfigPath -Raw | ConvertFrom-Json
+  $webhookUrl = Prompt-WebhookUrl -Default $existing.Url
+
+  $watch = Read-JsonConfig -ConfigPath $watchConfigPath
+  if ($null -eq $watch) { return }
+
   $watch | Add-Member -NotePropertyName webhookUrl -NotePropertyValue $webhookUrl -Force
   $json = $watch | ConvertTo-Json -Depth 5
   [System.IO.File]::WriteAllText($watchConfigPath, "$json`n", [System.Text.UTF8Encoding]::new($false))
-  Write-Ok "Saved webhook URL to codex-reset-watch.config.json"
+
+  if ([string]::IsNullOrWhiteSpace($webhookUrl)) {
+    Write-Warn "Webhooks disabled (empty URL). Reset notifications will be skipped."
+  } else {
+    Write-Ok "Saved webhook URL to codex-reset-watch.config.json"
+  }
 }
 
 function Start-CodexResetWatcher {
