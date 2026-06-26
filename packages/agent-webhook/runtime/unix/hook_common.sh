@@ -116,7 +116,7 @@ hook_load_config() {
   HOOK_SOURCE="$(jq -r '.source // "cursor"' <<<"$HOOK_CONFIG")"
   HOOK_WEBHOOK_URL="$(jq -r '.webhook_url // ""' <<<"$HOOK_CONFIG")"
   HOOK_TAIL_LENGTH="$(jq -r '.tail_length // 1000' <<<"$HOOK_CONFIG")"
-  HOOK_MAX_LOOPS="$(jq -r '.max_continue_loops // 10' <<<"$HOOK_CONFIG")"
+  HOOK_MAX_LOOPS="$(jq -r '.max_continue_loops // 100' <<<"$HOOK_CONFIG")"
   HOOK_CONTINUE_FLAG_MAX_AGE="$(jq -r '.continue_flag_max_age_seconds // 120' <<<"$HOOK_CONFIG")"
   HOOK_CONTINUE_MESSAGE="$(jq -r '.continue_message // "Tiếp tục"' <<<"$HOOK_CONFIG")"
   HOOK_KEYWORDS=()

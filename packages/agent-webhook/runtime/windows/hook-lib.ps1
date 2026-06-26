@@ -54,7 +54,7 @@ function Get-MaxContinueLoops {
     $config = Get-HookConfig
     $value = Get-HookField $config "max_continue_loops"
     if ($null -eq $value -or "$value" -notmatch '^\d+$') {
-        return 10
+        return 100
     }
     return [int]$value
 }

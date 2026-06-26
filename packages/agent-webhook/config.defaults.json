@@ -1,6 +1,6 @@
 {
   "tail_length": 1000,
-  "max_continue_loops": 10,
+  "max_continue_loops": 100,
   "continue_flag_max_age_seconds": 120,
   "locales": {
     "vi": {
