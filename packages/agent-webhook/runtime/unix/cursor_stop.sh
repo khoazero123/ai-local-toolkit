@@ -30,9 +30,9 @@ main() {
   fi
 
   flag_generation="$(jq -r '.generation_id // ""' <<<"$flag_json")"
-  if [[ "$flag_generation" != "$generation_id" ]]; then
+  if ! hook_continue_flag_active "$flag_json" "$flag_generation" "$generation_id"; then
     rm -f "$flag_path"
-    hook_log_line "auto-continue.log" "Cleared stale flag conversation_id=${conversation_id} flag_generation!=${generation_id}"
+    hook_log_line "auto-continue.log" "Cleared stale flag conversation_id=${conversation_id} flag_generation=${flag_generation} stop_generation=${generation_id}"
     exit 0
   fi
 

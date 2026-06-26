@@ -340,6 +340,40 @@ function Test-ContinueFlag {
     return ($null -ne (Get-ContinueFlag -ConversationId $ConversationId))
 }
 
+function Get-ContinueFlagMaxAgeSeconds {
+    $config = Get-HookConfig
+    $value = Get-HookField $config "continue_flag_max_age_seconds"
+    if ($null -eq $value -or "$value" -notmatch '^\d+$') {
+        return 120
+    }
+    return [int]$value
+}
+
+function Test-ContinueFlagFresh {
+    param($Flag)
+
+    $createdAt = [string](Get-HookField $Flag "created_at")
+    if ([string]::IsNullOrWhiteSpace($createdAt)) {
+        return $true
+    }
+
+    try {
+        $created = [datetime]::Parse(
+            $createdAt,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $ageSeconds = ((Get-Date).ToUniversalTime() - $created.ToUniversalTime()).TotalSeconds
+        if ($ageSeconds -lt 0) {
+            $ageSeconds = 0
+        }
+        return ($ageSeconds -le (Get-ContinueFlagMaxAgeSeconds))
+    }
+    catch {
+        return $true
+    }
+}
+
 function Test-ContinueFlagForGeneration {
     param(
         [string]$ConversationId,
@@ -357,6 +391,28 @@ function Test-ContinueFlagForGeneration {
     }
 
     return $flagGenerationId -eq $GenerationId
+}
+
+function Test-ContinueFlagForStop {
+    param(
+        [string]$ConversationId,
+        [string]$GenerationId
+    )
+
+    $flag = Get-ContinueFlag -ConversationId $ConversationId
+    if (-not $flag) {
+        return $false
+    }
+
+    $flagGenerationId = [string](Get-HookField $flag "generation_id")
+    if (-not [string]::IsNullOrWhiteSpace($flagGenerationId) -and
+            -not [string]::IsNullOrWhiteSpace($GenerationId) -and
+            $flagGenerationId -eq $GenerationId) {
+        return $true
+    }
+
+    # Cursor may pass a different generation_id on stop than afterAgentResponse.
+    return (Test-ContinueFlagFresh -Flag $flag)
 }
 
 function Clear-ContinueFlag {

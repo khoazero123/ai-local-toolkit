@@ -117,6 +117,7 @@ hook_load_config() {
   HOOK_WEBHOOK_URL="$(jq -r '.webhook_url // ""' <<<"$HOOK_CONFIG")"
   HOOK_TAIL_LENGTH="$(jq -r '.tail_length // 1000' <<<"$HOOK_CONFIG")"
   HOOK_MAX_LOOPS="$(jq -r '.max_continue_loops // 10' <<<"$HOOK_CONFIG")"
+  HOOK_CONTINUE_FLAG_MAX_AGE="$(jq -r '.continue_flag_max_age_seconds // 120' <<<"$HOOK_CONFIG")"
   HOOK_CONTINUE_MESSAGE="$(jq -r '.continue_message // "Tiếp tục"' <<<"$HOOK_CONFIG")"
   HOOK_KEYWORDS=()
   while IFS= read -r keyword; do
@@ -170,4 +171,52 @@ hook_contains_keyword() {
 
 hook_write_stdout_json() {
   printf '%s' "$1"
+}
+
+hook_parse_iso_utc_to_epoch() {
+  local iso="$1"
+  local epoch=""
+
+  if epoch="$(date -u -d "$iso" +%s 2>/dev/null)"; then
+    printf '%s' "$epoch"
+    return 0
+  fi
+
+  if epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null)"; then
+    printf '%s' "$epoch"
+    return 0
+  fi
+
+  return 1
+}
+
+hook_continue_flag_active() {
+  local flag_json="$1"
+  local flag_generation="$2"
+  local stop_generation="$3"
+
+  if [[ -n "$flag_generation" && -n "$stop_generation" && "$flag_generation" == "$stop_generation" ]]; then
+    return 0
+  fi
+
+  local created_at max_age now_ts created_ts age
+  created_at="$(jq -r '.created_at // ""' <<<"$flag_json")"
+  if [[ -z "$created_at" ]]; then
+    return 0
+  fi
+
+  if [[ ! "$HOOK_CONTINUE_FLAG_MAX_AGE" =~ ^[0-9]+$ ]]; then
+    HOOK_CONTINUE_FLAG_MAX_AGE=120
+  fi
+  max_age="$HOOK_CONTINUE_FLAG_MAX_AGE"
+
+  created_ts="$(hook_parse_iso_utc_to_epoch "$created_at" || true)"
+  if [[ -z "$created_ts" ]]; then
+    return 0
+  fi
+
+  now_ts="$(date -u +%s)"
+  age=$((now_ts - created_ts))
+  ((age < 0)) && age=0
+  ((age <= max_age))
 }

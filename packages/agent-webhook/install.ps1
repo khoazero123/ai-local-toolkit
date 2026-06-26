@@ -66,11 +66,12 @@ function Build-LocaleDefaults {
 
     $localeConfig = Get-SafePropertyValue -Object $locales -Name $Locale
     return [pscustomobject]@{
-        locale             = $Locale
-        keywords           = @($localeConfig.keywords | ForEach-Object { [string]$_ })
-        continue_message   = [string]$localeConfig.continue_message
-        tail_length        = [int]$Config.tail_length
-        max_continue_loops = [int]$Config.max_continue_loops
+        locale                        = $Locale
+        keywords                      = @($localeConfig.keywords | ForEach-Object { [string]$_ })
+        continue_message              = [string]$localeConfig.continue_message
+        tail_length                   = [int]$Config.tail_length
+        max_continue_loops            = [int]$Config.max_continue_loops
+        continue_flag_max_age_seconds   = [int]$Config.continue_flag_max_age_seconds
     }
 }
 
@@ -477,7 +478,8 @@ function New-HookConfigJson {
         [string[]]$Keywords,
         [int]$TailLength,
         [string]$ContinueMessage,
-        [int]$MaxContinueLoops
+        [int]$MaxContinueLoops,
+        [int]$ContinueFlagMaxAgeSeconds = 120
     )
 
     $keywordList = New-Object System.Collections.Generic.List[string]
@@ -489,12 +491,13 @@ function New-HookConfigJson {
     }
 
     $payload = [ordered]@{
-        source             = [string]$Source
-        webhook_url        = [string]$WebhookUrl
-        keywords           = $keywordList.ToArray()
-        tail_length        = [int]$TailLength
-        continue_message   = [string]$ContinueMessage
-        max_continue_loops = [int]$MaxContinueLoops
+        source                        = [string]$Source
+        webhook_url                   = [string]$WebhookUrl
+        keywords                      = $keywordList.ToArray()
+        tail_length                   = [int]$TailLength
+        continue_message              = [string]$ContinueMessage
+        max_continue_loops            = [int]$MaxContinueLoops
+        continue_flag_max_age_seconds = [int]$ContinueFlagMaxAgeSeconds
     }
     return ($payload | ConvertTo-Json -Compress -Depth 5)
 }
@@ -541,7 +544,8 @@ function Install-CursorHooks {
         -Keywords $Keywords `
         -TailLength ([int]$Defaults.tail_length) `
         -ContinueMessage ([string]$Defaults.continue_message) `
-        -MaxContinueLoops ([int]$Defaults.max_continue_loops)
+        -MaxContinueLoops ([int]$Defaults.max_continue_loops) `
+        -ContinueFlagMaxAgeSeconds ([int]$Defaults.continue_flag_max_age_seconds)
     [System.IO.File]::WriteAllText((Join-Path $hooksDir "hook-config.json"), $configJson, $script:HookUtf8)
 
     $hooksJson = @{
@@ -590,7 +594,8 @@ function Install-CodexHooks {
         -Keywords $Keywords `
         -TailLength ([int]$Defaults.tail_length) `
         -ContinueMessage ([string]$Defaults.continue_message) `
-        -MaxContinueLoops ([int]$Defaults.max_continue_loops)
+        -MaxContinueLoops ([int]$Defaults.max_continue_loops) `
+        -ContinueFlagMaxAgeSeconds ([int]$Defaults.continue_flag_max_age_seconds)
     [System.IO.File]::WriteAllText((Join-Path $hooksDir "hook-config.json"), $configJson, $script:HookUtf8)
 
     $promptPs1 = (Join-Path $hooksDir "codex-user-prompt-webhook.ps1")

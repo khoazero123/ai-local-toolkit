@@ -20,9 +20,11 @@ try {
         exit 0
     }
 
-    if (-not (Test-ContinueFlagForGeneration -ConversationId $conversationId -GenerationId $generationId)) {
+    $flag = Get-ContinueFlag -ConversationId $conversationId
+    if (-not (Test-ContinueFlagForStop -ConversationId $conversationId -GenerationId $generationId)) {
         Clear-ContinueFlag -ConversationId $conversationId
-        Write-HookLog -LogFileName "auto-continue.log" -Message ("Cleared stale flag conversation_id=$conversationId flag_generation!=current_generation=$generationId")
+        $flagGenerationId = [string](Get-HookField $flag "generation_id")
+        Write-HookLog -LogFileName "auto-continue.log" -Message ("Cleared stale flag conversation_id=$conversationId flag_generation=$flagGenerationId stop_generation=$generationId")
         exit 0
     }
 

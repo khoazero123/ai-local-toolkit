@@ -199,6 +199,7 @@ write_hook_config() {
   local tail_length="$5"
   local max_loops="$6"
   local continue_message="$7"
+  local flag_max_age="${8:-120}"
 
   jq -n \
     --arg source "$source" \
@@ -207,6 +208,7 @@ write_hook_config() {
     --arg keywords_csv "$keywords_csv" \
     --argjson tail_length "$tail_length" \
     --argjson max_continue_loops "$max_loops" \
+    --argjson continue_flag_max_age_seconds "$flag_max_age" \
     '$keywords_csv
       | split(",")
       | map(gsub("^\\s+|\\s+$"; ""))
@@ -217,7 +219,8 @@ write_hook_config() {
           keywords: $keywords,
           tail_length: $tail_length,
           continue_message: $continue_message,
-          max_continue_loops: $max_continue_loops
+          max_continue_loops: $max_continue_loops,
+          continue_flag_max_age_seconds: $continue_flag_max_age_seconds
         }' >"$target_dir/hook-config.json"
   printf '\n' >>"$target_dir/hook-config.json"
 }
@@ -243,6 +246,7 @@ install_cursor_hooks() {
   local tail_length="$4"
   local max_loops="$5"
   local continue_message="$6"
+  local flag_max_age="${7:-120}"
   local cursor_root="$HOME/.cursor"
   local hooks_dir="$cursor_root/tools/agent-webhook"
 
@@ -251,7 +255,7 @@ install_cursor_hooks() {
   cp "$package_root/runtime/unix/"*.sh "$hooks_dir/"
   chmod +x "$hooks_dir/"*.sh
 
-  write_hook_config "$hooks_dir" "$webhook_url" "cursor" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
+  write_hook_config "$hooks_dir" "$webhook_url" "cursor" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message" "$flag_max_age"
 
   cat >"$cursor_root/hooks.json" <<EOF
 {
@@ -279,6 +283,7 @@ install_codex_hooks() {
   local tail_length="$4"
   local max_loops="$5"
   local continue_message="$6"
+  local flag_max_age="${7:-120}"
   local codex_root="${CODEX_HOME:-$HOME/.codex}"
   local hooks_dir="$codex_root/tools/agent-webhook"
 
@@ -287,7 +292,7 @@ install_codex_hooks() {
   cp "$package_root/runtime/unix/"*.sh "$hooks_dir/"
   chmod +x "$hooks_dir/"*.sh
 
-  write_hook_config "$hooks_dir" "$webhook_url" "codex" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
+  write_hook_config "$hooks_dir" "$webhook_url" "codex" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message" "$flag_max_age"
 
   cat >"$codex_root/hooks.json" <<EOF
 {
@@ -329,7 +334,7 @@ main() {
   echo "=============================================="
 
   local package_root defaults_json locale default_keywords keywords_input keywords_csv
-  local tail_length max_loops continue_message webhook_url existing_webhook=""
+  local tail_length max_loops continue_message flag_max_age webhook_url existing_webhook=""
   package_root="$(get_package_root)"
   require_unix_tools
 
@@ -340,6 +345,7 @@ main() {
   continue_message="$(jq -r '.continue_message' <<<"$defaults_json")"
   tail_length="$(jq -r '.tail_length' <<<"$defaults_json")"
   max_loops="$(jq -r '.max_continue_loops' <<<"$defaults_json")"
+  flag_max_age="$(jq -r '.continue_flag_max_age_seconds // 120' <<<"$defaults_json")"
   ok "Using $locale locale defaults"
 
   local existing_config_path=""
@@ -351,6 +357,7 @@ main() {
     continue_message="$(jq -r '.continue_message' <<<"$defaults_json")"
     tail_length="$(jq -r '.tail_length' <<<"$defaults_json")"
     max_loops="$(jq -r '.max_continue_loops' <<<"$defaults_json")"
+    flag_max_age="$(jq -r '.continue_flag_max_age_seconds // 120' <<<"$defaults_json")"
     existing_webhook="$(jq -r '.existing_webhook_url // ""' <<<"$defaults_json")"
   fi
 
@@ -369,11 +376,11 @@ main() {
   fi
 
   if [[ "$install_cursor" == "yes" ]]; then
-    install_cursor_hooks "$package_root" "$webhook_url" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
+    install_cursor_hooks "$package_root" "$webhook_url" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message" "$flag_max_age"
   fi
 
   if [[ "$install_codex" == "yes" ]]; then
-    install_codex_hooks "$package_root" "$webhook_url" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message"
+    install_codex_hooks "$package_root" "$webhook_url" "$keywords_csv" "$tail_length" "$max_loops" "$continue_message" "$flag_max_age"
   fi
 
   echo

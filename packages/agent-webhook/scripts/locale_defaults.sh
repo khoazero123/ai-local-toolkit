@@ -116,7 +116,8 @@ resolve_defaults() {
       keywords: $config[0].locales[$locale].keywords,
       continue_message: $config[0].locales[$locale].continue_message,
       tail_length: $config[0].tail_length,
-      max_continue_loops: $config[0].max_continue_loops
+      max_continue_loops: $config[0].max_continue_loops,
+      continue_flag_max_age_seconds: ($config[0].continue_flag_max_age_seconds // 120)
     }'
 }
 
